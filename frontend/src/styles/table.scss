@@ -1,0 +1,221 @@
+/**
+ * Table/Arena Styles - The game table background and layout
+ */
+
+// Variables
+$table-bg: #1a5f2a;
+$table-bg-light: #2d8f45;
+$table-bg-dark: #0d3d17;
+
+// Main game arena
+.game-arena {
+  position: relative;
+  width: 100%;
+  height: 100vh;
+  overflow: hidden;
+  background: radial-gradient(
+    ellipse at center,
+    $table-bg-light 0%,
+    $table-bg 50%,
+    $table-bg-dark 100%
+  );
+
+  // Felt texture overlay
+  &::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+    opacity: 0.03;
+    pointer-events: none;
+    z-index: 0;
+  }
+}
+
+// Container for all player hands
+.hands-container {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 1;
+}
+
+// Individual player positions
+.player-area {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  z-index: 10;
+
+  &.south {
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 20; // Main player on top
+  }
+
+  &.north {
+    top: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+  }
+
+  &.west {
+    left: 20px;
+    top: 50%;
+    transform: translateY(-50%);
+  }
+
+  &.east {
+    right: 20px;
+    top: 50%;
+    transform: translateY(-50%);
+  }
+}
+
+// Hand container (holds the fanned cards)
+.hand-container {
+  position: relative;
+  display: flex;
+
+  &.horizontal {
+    flex-direction: row;
+    align-items: flex-end;
+  }
+
+  &.vertical {
+    flex-direction: column;
+    align-items: center;
+  }
+}
+
+// Card wrapper for positioning
+.card-slot {
+  position: relative;
+  flex-shrink: 0;
+  transition: z-index 0s;
+
+  &:hover {
+    z-index: 50 !important;
+  }
+}
+
+// Center trick area
+.trick-area {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 320px;
+  height: 240px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 15;
+}
+
+.trick-area-inner {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+// Played card positions in trick area
+.trick-card-wrapper {
+  position: absolute;
+
+  &.south-card {
+    bottom: 0;
+    left: 50%;
+    transform: translateX(-50%);
+  }
+
+  &.north-card {
+    top: 0;
+    left: 50%;
+    transform: translateX(-50%);
+  }
+
+  &.west-card {
+    left: 0;
+    top: 50%;
+    transform: translateY(-50%);
+  }
+
+  &.east-card {
+    right: 0;
+    top: 50%;
+    transform: translateY(-50%);
+  }
+}
+
+// Fade out animation for completed tricks
+@keyframes trickFadeOut {
+  from {
+    opacity: 1;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.8);
+  }
+}
+
+.trick-area.fade-out {
+  animation: trickFadeOut 0.5s ease-out forwards;
+}
+
+// UI Panels container (top-right)
+.ui-panels {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+// Center panel (bidding, trump selection, etc)
+.center-panel {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 50;
+}
+
+// Debug controls
+.debug-controls {
+  position: fixed;
+  top: 16px;
+  left: 16px;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  background: rgba(0, 0, 0, 0.7);
+  color: white;
+  border-radius: 8px;
+  font-size: 13px;
+
+  label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+  }
+
+  input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+  }
+}

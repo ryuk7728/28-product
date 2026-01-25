@@ -22,6 +22,7 @@ export type GameState = {
     isBidder: boolean;
   }>;
   drawPileCount: number;
+  autoDeal: boolean;
   bidsR1: number[];
   bidsR2: number[];
   round1BidderSeat: number | null;

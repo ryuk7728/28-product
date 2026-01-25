@@ -1,0 +1,188 @@
+/**
+ * Animation Styles - Shared animations and transitions
+ */
+
+// Card dealing animation with stagger
+@keyframes dealCard {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -100%) scale(0.5) rotate(-10deg);
+  }
+  60% {
+    opacity: 1;
+    transform: translate(0, 0) scale(1.05) rotate(2deg);
+  }
+  100% {
+    opacity: 1;
+    transform: translate(0, 0) scale(1) rotate(0deg);
+  }
+}
+
+.deal-animation {
+  animation: dealCard 0.4s ease-out forwards;
+}
+
+// Staggered deal delays
+@for $i from 0 through 8 {
+  .deal-delay-#{$i} {
+    animation-delay: #{$i * 0.08}s;
+    opacity: 0;
+  }
+}
+
+// Card play to center animation
+@keyframes playToCenter {
+  0% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+// Trick sweep animation
+@keyframes sweepTrick {
+  0% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.6);
+  }
+}
+
+.sweep-animation {
+  animation: sweepTrick 0.6s ease-in forwards;
+}
+
+// Fade in
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.fade-in {
+  animation: fadeIn 0.3s ease-out forwards;
+}
+
+// Fade out
+@keyframes fadeOut {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+.fade-out {
+  animation: fadeOut 0.3s ease-out forwards;
+}
+
+// Scale in (for modals/panels)
+@keyframes scaleIn {
+  from {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.scale-in {
+  animation: scaleIn 0.25s ease-out forwards;
+}
+
+// Slide up (for panels appearing)
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.slide-up {
+  animation: slideUp 0.3s ease-out forwards;
+}
+
+// Pulse highlight (for important elements)
+@keyframes pulseHighlight {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.5);
+  }
+  50% {
+    box-shadow: 0 0 0 10px rgba(59, 130, 246, 0);
+  }
+}
+
+.pulse-highlight {
+  animation: pulseHighlight 1.5s ease-in-out infinite;
+}
+
+// Shake (for errors)
+@keyframes shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  25% {
+    transform: translateX(-5px);
+  }
+  75% {
+    transform: translateX(5px);
+  }
+}
+
+.shake {
+  animation: shake 0.3s ease-in-out;
+}
+
+// Trump reveal flash
+@keyframes trumpReveal {
+  0% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(139, 92, 246, 0.7);
+  }
+  50% {
+    transform: scale(1.1);
+    box-shadow: 0 0 0 20px rgba(139, 92, 246, 0);
+  }
+  100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(139, 92, 246, 0);
+  }
+}
+
+.trump-reveal-animation {
+  animation: trumpReveal 0.6s ease-out;
+}
+
+// Winning team celebration
+@keyframes celebrate {
+  0%,
+  100% {
+    transform: scale(1) rotate(0deg);
+  }
+  25% {
+    transform: scale(1.05) rotate(-2deg);
+  }
+  75% {
+    transform: scale(1.05) rotate(2deg);
+  }
+}
+
+.celebrate {
+  animation: celebrate 0.5s ease-in-out 3;
+}

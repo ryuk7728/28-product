@@ -70,6 +70,9 @@ class GameState:
     # Concealed trump indicator card (removed from bidder hand)
     player_trump: Cards | None = None
 
+    # Auto-deal mode flag (if True, skip MANUAL_DEAL_REST phase)
+    auto_deal: bool = False
+
     # NEW: Suit void knowledge (persistent during PLAY; void stays void)
     # Rows: Hearts, Diamonds, Spades, Clubs; Cols: seat 0..3
     suit_matrix: list[list[int]] = field(default_factory=_default_suit_matrix)
@@ -149,6 +152,7 @@ class GameState:
                 for i, hand in enumerate(self.players_cards)
             ],
             "drawPileCount": len(self.draw_pile),
+            "autoDeal": self.auto_deal,
             "bidsR1": self.bids_r1_by_seat,
             "bidsR2": self.bids_r2_by_seat,
             "round1BidderSeat": self.round1_bidder_seat,

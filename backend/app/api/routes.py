@@ -11,6 +11,10 @@ class CreateGameRequest(BaseModel):
     first4Hands: list[list[str]]
 
 
+class CreateGameAutoRequest(BaseModel):
+    startingBidderIndex: int = Field(ge=0, le=3)
+
+
 class CreateGameResponse(BaseModel):
     gameId: str
 
@@ -18,6 +22,18 @@ class CreateGameResponse(BaseModel):
 @router.get("/health")
 def health() -> dict:
     return {"ok": True}
+
+
+@router.post("/games/auto", response_model=CreateGameResponse)
+def create_game_auto(req: CreateGameAutoRequest) -> CreateGameResponse:
+    """Create a new game with automatic card dealing."""
+    try:
+        state = game_manager.create_game_auto_deal(
+            starting_bidder_index=req.startingBidderIndex,
+        )
+        return CreateGameResponse(gameId=state.game_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @router.post("/games", response_model=CreateGameResponse)

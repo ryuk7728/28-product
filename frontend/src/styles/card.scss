@@ -1,0 +1,141 @@
+/**
+ * Card Styles - Based on Bridge reference
+ *
+ * Features:
+ * - Glass/shadow effect behind card
+ * - Flip animation for face up/down
+ * - Hover effect with lift animation
+ * - Highlighted state for legal moves
+ * - Disabled state with grayscale
+ */
+
+// Variables
+$card-bg: #fcfbf8;
+$card-shadow: rgba(0, 0, 0, 0.15);
+$card-back-bg: #4a90e2;
+$card-back-outer: #afb9c4;
+$highlight-color: #3b82f6;
+$selected-color: #fbbf24;
+
+// Base card styles
+.card {
+  position: relative;
+  border-radius: 8px;
+  background-color: rgba(0, 0, 0, 0.12);
+  box-shadow: 0 2px 8px $card-shadow, 0 4px 16px rgba(0, 0, 0, 0.1);
+  transition: transform 0.2s ease, box-shadow 0.2s ease, z-index 0s;
+  flex-shrink: 0;
+  overflow: hidden;
+
+  .card-inner {
+    width: 100%;
+    height: 100%;
+    border-radius: 6px;
+    overflow: hidden;
+    background-color: $card-bg;
+  }
+}
+
+// Face up state
+.card.flip-up {
+  .card-inner {
+    background-color: $card-bg;
+  }
+}
+
+// Face down state (card back)
+.card.flip-down {
+  background-color: $card-back-outer;
+
+  .card-inner {
+    background-color: $card-back-bg;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+}
+
+// Clickable card (interactive)
+.card.card-clickable {
+  cursor: pointer;
+
+  &:hover {
+    transform: translateY(-10px);
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.25), 0 12px 32px rgba(0, 0, 0, 0.15);
+    z-index: 50;
+
+    .card-inner {
+      background-color: #fff;
+    }
+  }
+
+  &:active {
+    transform: translateY(-6px);
+  }
+}
+
+// Highlighted card (legal move)
+.card.card-highlighted {
+  box-shadow: 0 0 0 3px $highlight-color, 0 2px 8px $card-shadow;
+
+  &.card-clickable:hover {
+    box-shadow: 0 0 0 3px $highlight-color, 0 8px 20px rgba(0, 0, 0, 0.25);
+  }
+}
+
+// Selected card
+.card.card-selected {
+  transform: translateY(-14px);
+  box-shadow: 0 0 0 3px $selected-color, 0 8px 20px rgba(0, 0, 0, 0.25);
+  z-index: 60;
+}
+
+// Disabled card (non-playable)
+.card.card-disabled {
+  filter: grayscale(60%) brightness(0.75);
+  cursor: not-allowed;
+  pointer-events: none;
+
+  .card-inner {
+    opacity: 0.8;
+  }
+}
+
+// Ensure SVG doesn't capture pointer events
+.card svg,
+.card svg * {
+  pointer-events: none !important;
+}
+
+// Card deal animation
+@keyframes cardDeal {
+  from {
+    opacity: 0;
+    transform: translateY(-30px) scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.card.card-dealing {
+  animation: cardDeal 0.3s ease-out forwards;
+}
+
+// Card play animation (moving to center)
+@keyframes cardPlay {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+// Trick card in center area
+.trick-card {
+  .card {
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  }
+}

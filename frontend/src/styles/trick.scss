@@ -1,0 +1,170 @@
+/**
+ * Trick Area Styles - Center table for played cards
+ */
+
+// Variables
+$trick-area-width: 280px;
+$trick-area-height: 200px;
+$card-width: 70px;
+$card-height: 98px;
+
+// Card entry animation
+@keyframes cardPlayIn {
+  0% {
+    opacity: 0;
+    transform: scale(0.5);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.1);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+// Winner pulse animation
+@keyframes winnerPulse {
+  0%, 100% {
+    box-shadow: 0 0 10px 2px rgba(255, 215, 0, 0.6);
+  }
+  50% {
+    box-shadow: 0 0 20px 6px rgba(255, 215, 0, 0.9);
+  }
+}
+
+// Fade out animation for completed tricks
+@keyframes trickFadeOut {
+  0% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(0.8);
+  }
+}
+
+// Star badge animation
+@keyframes starSpin {
+  0% {
+    transform: rotate(0deg) scale(1);
+  }
+  50% {
+    transform: rotate(180deg) scale(1.2);
+  }
+  100% {
+    transform: rotate(360deg) scale(1);
+  }
+}
+
+.trick-container {
+  position: relative;
+  width: $trick-area-width;
+  height: $trick-area-height;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  &.fade-out {
+    animation: trickFadeOut 0.5s ease-out forwards;
+  }
+}
+
+// Individual trick card wrapper
+.trick-card {
+  position: absolute;
+  animation: cardPlayIn 0.3s ease-out forwards;
+
+  // Position cards based on player direction
+  &.south-card {
+    bottom: 0;
+    left: 50%;
+    transform: translateX(-50%);
+  }
+
+  &.north-card {
+    top: 0;
+    left: 50%;
+    transform: translateX(-50%);
+  }
+
+  &.west-card {
+    left: 0;
+    top: 50%;
+    transform: translateY(-50%);
+  }
+
+  &.east-card {
+    right: 0;
+    top: 50%;
+    transform: translateY(-50%);
+  }
+
+  // Lead card indicator
+  &.lead {
+    .card {
+      box-shadow: 0 0 8px 2px rgba(100, 200, 255, 0.5);
+    }
+  }
+
+  // Winning card glow
+  &.winning {
+    .card {
+      animation: winnerPulse 1s ease-in-out infinite;
+    }
+  }
+}
+
+// Winner badge (star)
+.winner-badge {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  width: 24px;
+  height: 24px;
+  background: linear-gradient(135deg, #ffd700, #ffaa00);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  color: #8b4513;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+  animation: starSpin 2s ease-in-out infinite;
+  z-index: 10;
+}
+
+// Empty state
+.trick-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+
+  span {
+    padding: 12px 24px;
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 20px;
+    color: rgba(255, 255, 255, 0.5);
+    font-size: 14px;
+    font-weight: 500;
+  }
+}
+
+// Trick count/score badge (optional, for later)
+.trick-score {
+  position: absolute;
+  top: -30px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 4px 12px;
+  background: rgba(0, 0, 0, 0.6);
+  border-radius: 12px;
+  color: white;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}

@@ -13,6 +13,69 @@ class GameManager:
     def __init__(self) -> None:
         self._games: dict[str, GameState] = {}
 
+    def create_game_auto_deal(
+        self,
+        *,
+        starting_bidder_index: int,
+    ) -> GameState:
+        """
+        Create a new game with automatic card distribution.
+        Shuffles the deck, deals 4 cards to each player, stores remaining 16 in draw pile.
+        """
+        if starting_bidder_index < 0 or starting_bidder_index > 3:
+            raise ValueError("startingBidderIndex must be in 0..3")
+
+        deck = Cards.packOf28()  # 32 cards
+        random.shuffle(deck)
+
+        # Deal first 4 cards to each player
+        players_cards = [
+            deck[0:4],
+            deck[4:8],
+            deck[8:12],
+            deck[12:16],
+        ]
+        remaining = deck[16:32]
+
+        bidding_order = [(starting_bidder_index + i) % 4 for i in range(4)]
+
+        game_id = str(uuid.uuid4())
+        state = GameState(
+            game_id=game_id,
+            phase="BIDDING_R1",
+            starting_bidder_index=starting_bidder_index,
+            bidding_order=bidding_order,
+            players_cards=[list(h) for h in players_cards],
+            draw_pile=list(remaining),
+            auto_deal=True,  # Flag to indicate auto-deal mode
+            event_log=[
+                "Game created (auto-deal).",
+                f"Starting bidder: P{starting_bidder_index + 1}",
+            ],
+        )
+
+        self._games[game_id] = state
+        return state
+
+    def auto_deal_rest(self, state: GameState) -> None:
+        """
+        Automatically distribute the remaining 16 cards (4 to each player).
+        Used when auto_deal mode is enabled.
+        """
+        if len(state.draw_pile) != 16:
+            raise ValueError(f"Expected 16 cards in draw pile, got {len(state.draw_pile)}")
+
+        # Shuffle the draw pile before dealing
+        random.shuffle(state.draw_pile)
+
+        # Deal 4 cards to each player
+        for seat in range(4):
+            for _ in range(4):
+                card = state.draw_pile.pop(0)
+                state.players_cards[seat].append(card)
+
+        state.event_log.append("Auto-deal: remaining 16 cards distributed.")
+
     def create_game_manual_first4(
         self,
         *,

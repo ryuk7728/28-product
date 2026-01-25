@@ -323,6 +323,27 @@ async def _advance_bots_until_human_any_phase(
             continue
 
         if state.phase == "MANUAL_DEAL_REST":
+            # If auto_deal mode, automatically deal the rest of the cards
+            if state.auto_deal:
+                game_manager.auto_deal_rest(state)
+
+                # Check abort conditions after full deal
+                reason = _abort_reason_after_full_deal(state)
+                if reason:
+                    state.event_log.append(f"GAME ABORTED: {reason}")
+                    # Note: Caller must handle abort after this function returns
+                    # We set a marker that will be checked
+                    state.phase = "GAME_OVER"
+                    state.winnerTeam = -1  # Marker for abort
+                    return
+
+                # Proceed to R2 bidding
+                state.phase = "BIDDING_R2"
+                state.bidding_r2_step = 0
+                state.bidding_r2_bids_by_pos = [0, 0, 0, 0]
+                state.bids_r2_by_seat = [0, 0, 0, 0]
+                state.event_log.append("Auto-deal complete. Bidding Round 2 starts.")
+                continue  # Continue advancing bots in R2
             return
 
         if state.phase == "BIDDING_R2":
@@ -365,6 +386,21 @@ async def ws_game(websocket: WebSocket, game_id: str) -> None:
     bot_sem = app.state.bot_sem
 
     await _advance_bots_until_human_any_phase(state, pool, bot_sem, websocket, game_id)
+
+    # Check if auto-deal caused an abort condition
+    if state.phase == "GAME_OVER" and state.winnerTeam == -1:
+        # Find the abort reason from event log
+        reason = "UNKNOWN"
+        for log in reversed(state.event_log):
+            if "ALL_FOUR_JACKS" in log:
+                reason = "ALL_FOUR_JACKS"
+                break
+            if "ALL_TRUMPS_ONE_SIDE" in log:
+                reason = "ALL_TRUMPS_ONE_SIDE"
+                break
+        await _abort_game(websocket, game_id, reason)
+        return
+
     await _send_state(websocket, state)
 
     try:
