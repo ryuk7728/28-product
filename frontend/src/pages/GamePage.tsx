@@ -21,6 +21,8 @@ import {
   TricksCounter,
   GameOverModal,
   PhaseIndicator,
+  TrumpRevealOverlay,
+  type PlayedCardInfo,
 } from "../components/panels";
 import { useGameWebSocket } from "../hooks/useGameWebSocket";
 import type { Card as CardType } from "../api/types";
@@ -41,8 +43,14 @@ export const GamePage: React.FC<GamePageProps> = ({ gameId, onGameEnd }) => {
   const [showBotCards, setShowBotCards] = useState(false);
   const [selectedCard, setSelectedCard] = useState<string | null>(null);
   const [trickComplete, setTrickComplete] = useState(false);
+  const [cachedTrickCards, setCachedTrickCards] = useState<TrickCard[]>([]);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [abortReason, setAbortReason] = useState<string | null>(null);
+
+  // Trump reveal overlay state
+  const [showTrumpRevealOverlay, setShowTrumpRevealOverlay] = useState(false);
+  const [prevTrumpRevealed, setPrevTrumpRevealed] = useState(false);
+  const [revealedTrumpInfo, setRevealedTrumpInfo] = useState<{ suit: string; cardId?: string } | null>(null);
 
   // WebSocket connection
   const {
@@ -83,27 +91,56 @@ export const GamePage: React.FC<GamePageProps> = ({ gameId, onGameEnd }) => {
 
   // Build trick cards from game state
   const trickCards: TrickCard[] = useMemo(() => {
-    if (!gameState?.play?.trickCards) return [];
+    if (!gameState?.play?.trickCards) {
+      console.log("[TRICK] useMemo: No trickCards in gameState, returning []");
+      return [];
+    }
 
     const leaderIndex = gameState.play.leaderIndex;
-    return gameState.play.trickCards.map((card, idx) => ({
+    const cards = gameState.play.trickCards.map((card, idx) => ({
       cardId: card.cardId,
       seatIndex: (leaderIndex + idx) % 4,
-      isWinning: false, // Will be set when trick completes
+      isWinning: false,
     }));
+    console.log("[TRICK] useMemo: trickCards computed, length =", cards.length, "cards =", cards.map(c => c.cardId));
+    return cards;
   }, [gameState?.play?.trickCards, gameState?.play?.leaderIndex]);
 
-  // Detect trick completion
+  // Detect trick completion and cache the cards
   useEffect(() => {
+    console.log("[TRICK] useEffect: trickCards.length =", trickCards.length, "trickComplete =", trickComplete);
     if (trickCards.length === 4 && !trickComplete) {
+      console.log("[TRICK] useEffect: CACHING 4 cards, starting 5s timer");
+      // Cache the completed trick cards before backend clears them
+      setCachedTrickCards([...trickCards]);
       setTrickComplete(true);
       // Reset after delay
       const timer = setTimeout(() => {
+        console.log("[TRICK] useEffect: Timer expired, clearing cache");
         setTrickComplete(false);
+        setCachedTrickCards([]);
       }, TRICK_DISPLAY_DELAY_MS);
-      return () => clearTimeout(timer);
+      return () => {
+        console.log("[TRICK] useEffect: Cleanup - clearing timer");
+        clearTimeout(timer);
+      };
     }
   }, [trickCards.length, trickComplete]);
+
+  // Detect trump reveal transition
+  useEffect(() => {
+    const currentTrumpRevealed = gameState?.play?.trumpReveal || false;
+    const trumpSuit = gameState?.play?.trumpSuit;
+    const trumpCardId = gameState?.play?.trumpCardId;
+
+    // If trump just got revealed (was hidden, now revealed)
+    if (currentTrumpRevealed && !prevTrumpRevealed && trumpSuit) {
+      setRevealedTrumpInfo({ suit: trumpSuit, cardId: trumpCardId || undefined });
+      setShowTrumpRevealOverlay(true);
+    }
+
+    setPrevTrumpRevealed(currentTrumpRevealed);
+  }, [gameState?.play?.trumpReveal, gameState?.play?.trumpSuit, gameState?.play?.trumpCardId, prevTrumpRevealed]);
 
   // Handle bid submission
   const handleBid = useCallback(
@@ -332,11 +369,19 @@ export const GamePage: React.FC<GamePageProps> = ({ gameId, onGameEnd }) => {
           "You can't follow suit. Reveal your trump card to play it, or play another card.";
       }
 
+      // Build played cards info for the panel
+      const playedCards: PlayedCardInfo[] = trickCards.map((tc) => ({
+        cardId: tc.cardId,
+        seatIndex: tc.seatIndex,
+      }));
+
       return (
         <RevealTrumpPanel
           message={message}
           onReveal={() => handleRevealChoice(true)}
           onKeepHidden={() => handleRevealChoice(false)}
+          playedCards={playedCards}
+          currentSuit={gameState?.play?.currentSuit}
         />
       );
     }
@@ -428,9 +473,14 @@ export const GamePage: React.FC<GamePageProps> = ({ gameId, onGameEnd }) => {
 
     // Play phase - show trick area
     if (phase === "PLAY") {
+      // Use cached cards during the delay period, otherwise use live cards
+      const displayCards = trickComplete && cachedTrickCards.length === 4
+        ? cachedTrickCards
+        : trickCards;
+      console.log("[TRICK] render: trickComplete =", trickComplete, "cachedTrickCards.length =", cachedTrickCards.length, "trickCards.length =", trickCards.length, "displayCards.length =", displayCards.length);
       return (
         <TrickArea
-          cards={trickCards}
+          cards={displayCards}
           trickComplete={trickComplete}
           leadSeatIndex={gameState?.play?.leaderIndex}
         />
@@ -557,6 +607,7 @@ export const GamePage: React.FC<GamePageProps> = ({ gameId, onGameEnd }) => {
             <PhaseIndicator phase={phase} currentPlayerSeat={turnIndex} />
             <TrumpIndicator
               trumpSuit={gameState.play?.trumpSuit || null}
+              trumpCardId={gameState.play?.trumpCardId}
               isRevealed={gameState.play?.trumpReveal || false}
             />
             <TricksCounter humanTricks={humanTricks} botTricks={botTricks} />
@@ -570,7 +621,17 @@ export const GamePage: React.FC<GamePageProps> = ({ gameId, onGameEnd }) => {
             />
           </div>
         }
-        overlay={renderGameOver() || renderAbortModal()}
+        overlay={
+          showTrumpRevealOverlay && revealedTrumpInfo ? (
+            <TrumpRevealOverlay
+              trumpSuit={revealedTrumpInfo.suit}
+              trumpCardId={revealedTrumpInfo.cardId}
+              onComplete={() => setShowTrumpRevealOverlay(false)}
+            />
+          ) : (
+            renderGameOver() || renderAbortModal()
+          )
+        }
       />
     </div>
   );

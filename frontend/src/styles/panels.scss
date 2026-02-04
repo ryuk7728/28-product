@@ -129,7 +129,42 @@ $reveal-btn: #8b5cf6;
 
 // Reveal trump panel
 .reveal-panel {
-  max-width: 320px;
+  max-width: 400px;
+
+  .played-cards-section {
+    margin: 16px 0;
+    padding: 12px;
+    background: rgba(0, 0, 0, 0.05);
+    border-radius: 10px;
+
+    .played-cards-label {
+      font-size: 12px;
+      font-weight: 600;
+      color: #6b7280;
+      margin-bottom: 10px;
+      text-align: center;
+    }
+
+    .played-cards-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      justify-content: center;
+    }
+
+    .played-card-item {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+
+      .player-name {
+        font-size: 11px;
+        font-weight: 600;
+        color: #374151;
+      }
+    }
+  }
 
   .reveal-btns {
     display: flex;
@@ -331,5 +366,94 @@ $reveal-btn: #8b5cf6;
     &:hover {
       transform: scale(1.05);
     }
+  }
+}
+
+// Trump reveal overlay
+@keyframes trumpRevealPulse {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.05);
+  }
+}
+
+@keyframes trumpRevealFadeIn {
+  0% {
+    opacity: 0;
+    transform: scale(0.8);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.trump-reveal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.85);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1100;
+  backdrop-filter: blur(8px);
+  animation: trumpRevealFadeIn 0.4s ease-out;
+
+  &.fade-out {
+    opacity: 0;
+    transition: opacity 0.5s ease-out;
+  }
+}
+
+.trump-reveal-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 24px;
+  animation: trumpRevealPulse 2s ease-in-out infinite;
+
+  .trump-reveal-title {
+    font-size: 36px;
+    font-weight: 800;
+    color: white;
+    text-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+  }
+
+  .trump-reveal-card-container {
+    filter: drop-shadow(0 20px 40px rgba(0, 0, 0, 0.6));
+  }
+
+  .trump-suit-display {
+    font-size: 160px;
+    filter: drop-shadow(0 8px 24px rgba(0, 0, 0, 0.5));
+
+    &.red {
+      color: #ef4444;
+    }
+
+    &.black {
+      color: white;
+    }
+  }
+
+  .trump-suit-name {
+    font-size: 32px;
+    font-weight: 700;
+
+    &.red {
+      color: #ef4444;
+    }
+
+    &.black {
+      color: white;
+    }
+  }
+
+  .trump-reveal-hint {
+    font-size: 14px;
+    color: rgba(255, 255, 255, 0.6);
+    margin-top: 16px;
   }
 }

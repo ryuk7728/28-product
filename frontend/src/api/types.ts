@@ -36,6 +36,7 @@ export type GameState = {
     currentSuit: string;
     trumpReveal: boolean;
     trumpSuit: string | null;
+    trumpCardId: string | null;
     trickCards: Card[];
     trumpIndice: number[];
     team1Points: number;

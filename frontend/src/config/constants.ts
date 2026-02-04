@@ -59,8 +59,8 @@ export const SEAT_HORIZONTAL: Record<number, boolean> = {
 // TIMING CONSTANTS (milliseconds)
 // =============================================================================
 
-export const TRICK_DISPLAY_DELAY_MS = 2000;     // Time to show completed trick
-export const TRUMP_REVEAL_DISPLAY_MS = 1500;    // Time to show revealed trump
+export const TRICK_DISPLAY_DELAY_MS = 5000;     // Time to show completed trick (5 seconds)
+export const TRUMP_REVEAL_DISPLAY_MS = 5000;    // Time to show revealed trump (5 seconds)
 export const DEAL_CARD_DELAY_MS = 80;           // Delay between dealing each card
 export const BOT_THINKING_DELAY_MS = 500;       // Fake thinking time for bots
 export const CARD_ANIMATION_DURATION_MS = 300;  // Duration of card movement

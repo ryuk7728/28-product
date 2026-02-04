@@ -124,8 +124,15 @@ class GameState:
 
     def to_public_dict(self) -> dict:
         from app.engine.serializer import serialize_card
+        from app.engine.cards_adapter import to_card_id
 
         trump_suit_visible = self.trumpSuit if self.trumpReveal else None
+        # Only expose trump card ID when revealed
+        trump_card_id_visible = (
+            to_card_id(self.player_trump)
+            if self.trumpReveal and self.player_trump is not None
+            else None
+        )
 
         suit_knowledge = {
             "Hearts": self.suit_matrix[0],
@@ -169,6 +176,7 @@ class GameState:
                 "currentSuit": self.currentSuit,
                 "trumpReveal": self.trumpReveal,
                 "trumpSuit": trump_suit_visible,
+                "trumpCardId": trump_card_id_visible,
                 "trickCards": [serialize_card(c) for c in self.s],
                 "trumpIndice": self.trumpIndice,
                 "team1Points": self.team1Points,
