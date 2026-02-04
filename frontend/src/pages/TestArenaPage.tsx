@@ -88,7 +88,6 @@ export const TestArenaPage: React.FC = () => {
   const [showBotCards, setShowBotCards] = useState(false);
   const [selectedCard, setSelectedCard] = useState<string | null>(null);
   const [trickCards, setTrickCards] = useState<TrickCard[]>([]);
-  const [trickComplete, setTrickComplete] = useState(false);
   const [leadSeatIndex, setLeadSeatIndex] = useState<number | undefined>(undefined);
 
   // Demo state for panels
@@ -115,7 +114,6 @@ export const TestArenaPage: React.FC = () => {
       setBotTricks((prev) => prev + 1);
     }
     setTrickCards([]);
-    setTrickComplete(false);
     setLeadSeatIndex(undefined);
   }, []);
 
@@ -133,12 +131,13 @@ export const TestArenaPage: React.FC = () => {
       setTrickCards((prev) => {
         const newCards = [...prev, { cardId, seatIndex }];
 
-        // If trick is complete (4 cards), mark the last card as winner and set complete flag
+        // If trick is complete (4 cards), mark the last card as winner
         if (newCards.length === 4) {
           // Randomly pick a winner for demo
           const winnerIdx = Math.floor(Math.random() * 4);
           newCards[winnerIdx].isWinning = true;
-          setTimeout(() => setTrickComplete(true), 300);
+          // Clear trick after delay (simulating backend behavior)
+          setTimeout(() => handleTrickComplete(), 2000);
         }
 
         return newCards;
@@ -203,7 +202,6 @@ export const TestArenaPage: React.FC = () => {
     setHands(createInitialHands());
     setActivePlayer(1);
     setTrickCards([]);
-    setTrickComplete(false);
     setLeadSeatIndex(undefined);
     setSelectedCard(null);
     setDemoPhase("play");
@@ -221,7 +219,7 @@ export const TestArenaPage: React.FC = () => {
     const isHuman = !isBot;
     const isHorizontal = seatIndex === 1 || seatIndex === 3;
     const isActive = activePlayer === seatIndex;
-    const canInteract = isHuman && isActive && !trickComplete && demoPhase === "play";
+    const canInteract = isHuman && isActive && demoPhase === "play";
 
     return {
       seatIndex,
@@ -273,8 +271,6 @@ export const TestArenaPage: React.FC = () => {
         return (
           <TrickArea
             cards={trickCards}
-            trickComplete={trickComplete}
-            onTrickComplete={handleTrickComplete}
             leadSeatIndex={leadSeatIndex}
           />
         );

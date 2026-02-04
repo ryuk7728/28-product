@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.bots.bidding_bot import plan_bid_and_trump_from_first4
@@ -23,6 +25,9 @@ from app.engine.bot_runner import advance_bots_until_human
 router = APIRouter()
 
 BOT_SEATS = {0, 2}
+
+# 5 seconds delay to display completed trick
+TRICK_DISPLAY_DELAY_SECONDS = 5
 
 
 async def _send_state(websocket: WebSocket, state) -> None:
@@ -365,7 +370,7 @@ async def _advance_bots_until_human_any_phase(
             continue
 
         if state.phase == "PLAY":
-            await advance_bots_until_human(state, pool, bot_sem)
+            await advance_bots_until_human(state, pool, bot_sem, websocket, _send_state)
             return
 
         return
@@ -585,6 +590,13 @@ async def ws_game(websocket: WebSocket, game_id: str) -> None:
 
                 try:
                     apply_reveal_choice(state, seat, reveal)
+
+                    # If revealing trump completed trick (4 cards), send state and wait
+                    # before clearing, so the completed trick is visible
+                    if len(state.s) == 4:
+                        await _send_state(websocket, state)
+                        await asyncio.sleep(TRICK_DISPLAY_DELAY_SECONDS)
+
                     resolve_if_catch_complete(state)
                     await _advance_bots_until_human_any_phase(
                         state, pool, bot_sem, websocket, game_id
@@ -611,6 +623,13 @@ async def ws_game(websocket: WebSocket, game_id: str) -> None:
 
                 try:
                     apply_play_card(state, seat, card_id)
+
+                    # If human completed trick (4 cards), send state and wait
+                    # before clearing, so the completed trick is visible
+                    if len(state.s) == 4:
+                        await _send_state(websocket, state)
+                        await asyncio.sleep(TRICK_DISPLAY_DELAY_SECONDS)
+
                     resolve_if_catch_complete(state)
                     await _advance_bots_until_human_any_phase(
                         state, pool, bot_sem, websocket, game_id

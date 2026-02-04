@@ -88,7 +88,6 @@ export function useGameWebSocket(
 
         switch (msg.type) {
           case "STATE_UPDATE":
-            console.log("[WS] STATE_UPDATE: trickCards =", msg.state.play?.trickCards?.map((c: { cardId: string }) => c.cardId) || [], "catchNumber =", msg.state.play?.catchNumber);
             setGameState(msg.state);
             callbacksRef.current.onStateUpdate?.(msg.state);
             break;

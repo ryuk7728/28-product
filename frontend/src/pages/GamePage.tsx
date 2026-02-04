@@ -26,7 +26,7 @@ import {
 } from "../components/panels";
 import { useGameWebSocket } from "../hooks/useGameWebSocket";
 import type { Card as CardType } from "../api/types";
-import { PLAYER_NAMES, TRICK_DISPLAY_DELAY_MS } from "../config/constants";
+import { PLAYER_NAMES } from "../config/constants";
 import "../styles/index.scss";
 
 // Human seats (You = 1, Partner = 3)
@@ -42,8 +42,6 @@ export const GamePage: React.FC<GamePageProps> = ({ gameId, onGameEnd }) => {
   // Local UI state
   const [showBotCards, setShowBotCards] = useState(false);
   const [selectedCard, setSelectedCard] = useState<string | null>(null);
-  const [trickComplete, setTrickComplete] = useState(false);
-  const [cachedTrickCards, setCachedTrickCards] = useState<TrickCard[]>([]);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [abortReason, setAbortReason] = useState<string | null>(null);
 
@@ -90,42 +88,20 @@ export const GamePage: React.FC<GamePageProps> = ({ gameId, onGameEnd }) => {
   );
 
   // Build trick cards from game state
+  // Backend now handles the 5-second delay before clearing completed tricks,
+  // so we can simply use the trickCards directly from the state
   const trickCards: TrickCard[] = useMemo(() => {
     if (!gameState?.play?.trickCards) {
-      console.log("[TRICK] useMemo: No trickCards in gameState, returning []");
       return [];
     }
 
     const leaderIndex = gameState.play.leaderIndex;
-    const cards = gameState.play.trickCards.map((card, idx) => ({
+    return gameState.play.trickCards.map((card, idx) => ({
       cardId: card.cardId,
       seatIndex: (leaderIndex + idx) % 4,
       isWinning: false,
     }));
-    console.log("[TRICK] useMemo: trickCards computed, length =", cards.length, "cards =", cards.map(c => c.cardId));
-    return cards;
   }, [gameState?.play?.trickCards, gameState?.play?.leaderIndex]);
-
-  // Detect trick completion and cache the cards
-  useEffect(() => {
-    console.log("[TRICK] useEffect: trickCards.length =", trickCards.length, "trickComplete =", trickComplete);
-    if (trickCards.length === 4 && !trickComplete) {
-      console.log("[TRICK] useEffect: CACHING 4 cards, starting 5s timer");
-      // Cache the completed trick cards before backend clears them
-      setCachedTrickCards([...trickCards]);
-      setTrickComplete(true);
-      // Reset after delay
-      const timer = setTimeout(() => {
-        console.log("[TRICK] useEffect: Timer expired, clearing cache");
-        setTrickComplete(false);
-        setCachedTrickCards([]);
-      }, TRICK_DISPLAY_DELAY_MS);
-      return () => {
-        console.log("[TRICK] useEffect: Cleanup - clearing timer");
-        clearTimeout(timer);
-      };
-    }
-  }, [trickCards.length, trickComplete]);
 
   // Detect trump reveal transition
   useEffect(() => {
@@ -472,16 +448,11 @@ export const GamePage: React.FC<GamePageProps> = ({ gameId, onGameEnd }) => {
     }
 
     // Play phase - show trick area
+    // Backend handles the 5-second delay, so we use trickCards directly
     if (phase === "PLAY") {
-      // Use cached cards during the delay period, otherwise use live cards
-      const displayCards = trickComplete && cachedTrickCards.length === 4
-        ? cachedTrickCards
-        : trickCards;
-      console.log("[TRICK] render: trickComplete =", trickComplete, "cachedTrickCards.length =", cachedTrickCards.length, "trickCards.length =", trickCards.length, "displayCards.length =", displayCards.length);
       return (
         <TrickArea
-          cards={displayCards}
-          trickComplete={trickComplete}
+          cards={trickCards}
           leadSeatIndex={gameState?.play?.leaderIndex}
         />
       );
