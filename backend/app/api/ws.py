@@ -626,8 +626,8 @@ async def ws_game(websocket: WebSocket, game_id: str) -> None:
 
                     # If human completed trick (4 cards), send state and wait
                     # before clearing, so the completed trick is visible
+                    await _send_state(websocket, state)
                     if len(state.s) == 4:
-                        await _send_state(websocket, state)
                         await asyncio.sleep(TRICK_DISPLAY_DELAY_SECONDS)
 
                     resolve_if_catch_complete(state)
