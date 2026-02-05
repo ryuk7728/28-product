@@ -27,7 +27,7 @@ router = APIRouter()
 BOT_SEATS = {0, 2}
 
 # 5 seconds delay to display completed trick
-TRICK_DISPLAY_DELAY_SECONDS = 5
+TRICK_DISPLAY_DELAY_SECONDS = 3
 
 
 async def _send_state(websocket: WebSocket, state) -> None:

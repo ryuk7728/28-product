@@ -12,7 +12,7 @@ from app.engine.play_engine import (
 )
 
 # 5 seconds delay to display completed trick
-TRICK_DISPLAY_DELAY_SECONDS = 5
+TRICK_DISPLAY_DELAY_SECONDS = 3
 
 BOT_SEATS = {0, 2}
 

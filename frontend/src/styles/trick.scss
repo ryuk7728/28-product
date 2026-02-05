@@ -79,26 +79,26 @@ $card-height: 98px;
 
   // Position cards based on player direction
   &.south-card {
-    bottom: 0;
-    left: 50%;
+    bottom: -40%;
+    left: 40%;
     transform: translateX(-50%);
   }
 
   &.north-card {
-    top: 0;
-    left: 50%;
+    top: -20%;
+    left: 40%;
     transform: translateX(-50%);
   }
 
   &.west-card {
     left: 0;
-    top: 50%;
+    top: 30%;
     transform: translateY(-50%);
   }
 
   &.east-card {
     right: 0;
-    top: 50%;
+    top: 30%;
     transform: translateY(-50%);
   }
 
