@@ -573,8 +573,8 @@ export const GamePage: React.FC<GamePageProps> = ({ gameId, onGameEnd }) => {
       <GameArena
         players={players}
         centerContent={renderCenterContent()}
-        uiPanels={
-          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        uiPanelInfo={
+          <>
             <PhaseIndicator phase={phase} currentPlayerSeat={turnIndex} />
             <TrumpIndicator
               trumpSuit={gameState.play?.trumpSuit || null}
@@ -582,15 +582,17 @@ export const GamePage: React.FC<GamePageProps> = ({ gameId, onGameEnd }) => {
               isRevealed={gameState.play?.trumpReveal || false}
             />
             <TricksCounter humanTricks={humanTricks} botTricks={botTricks} />
-            <ScorePanel
-              humanScore={0}
-              botScore={0}
-              currentBid={finalBidValue ?? null}
-              biddingTeam={biddingTeam}
-              humanPoints={gameState.play?.team2Points || 0}
-              botPoints={gameState.play?.team1Points || 0}
-            />
-          </div>
+          </>
+        }
+        uiPanelScore={
+          <ScorePanel
+            humanScore={0}
+            botScore={0}
+            currentBid={finalBidValue ?? null}
+            biddingTeam={biddingTeam}
+            humanPoints={gameState.play?.team2Points || 0}
+            botPoints={gameState.play?.team1Points || 0}
+          />
         }
         overlay={
           showTrumpRevealOverlay && revealedTrumpInfo ? (

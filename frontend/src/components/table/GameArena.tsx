@@ -26,7 +26,9 @@ export interface PlayerData {
 export interface GameArenaProps {
   players: PlayerData[];
   centerContent?: ReactNode;
-  uiPanels?: ReactNode;
+  uiPanels?: ReactNode;  // Legacy - kept for backward compatibility
+  uiPanelInfo?: ReactNode;  // Info panel (phase, trump, tricks)
+  uiPanelScore?: ReactNode; // Score panel (scoreboard)
   overlay?: ReactNode;
 }
 
@@ -34,6 +36,8 @@ export const GameArena: React.FC<GameArenaProps> = ({
   players,
   centerContent,
   uiPanels,
+  uiPanelInfo,
+  uiPanelScore,
   overlay,
 }) => {
   return (
@@ -95,8 +99,14 @@ export const GameArena: React.FC<GameArenaProps> = ({
         <div className="trick-area-inner">{centerContent}</div>
       </div>
 
-      {/* UI Panels (top-right) */}
+      {/* Legacy UI Panels (top-right) - for backward compatibility */}
       {uiPanels && <div className="ui-panels">{uiPanels}</div>}
+
+      {/* Info Panel (phase, trump, tricks) - independently positioned */}
+      {uiPanelInfo && <div className="ui-panel-info">{uiPanelInfo}</div>}
+
+      {/* Score Panel (scoreboard) - independently positioned */}
+      {uiPanelScore && <div className="ui-panel-score">{uiPanelScore}</div>}
 
       {/* Overlay (modals, game over, etc) */}
       {overlay}

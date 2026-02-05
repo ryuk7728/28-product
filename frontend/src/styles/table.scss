@@ -171,15 +171,34 @@ $table-bg-dark: #0d3d17;
   animation: trickFadeOut 0.5s ease-out forwards;
 }
 
-// UI Panels container (top-right)
+// UI Panels container (top-right) - Legacy, kept for backward compatibility
 .ui-panels {
   position: absolute;
-  top: 16px;
-  right: 16px;
+  top: 2%;
+  right: 15%;
   z-index: 100;
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+// Info Panel (phase, trump, tricks) - independently positioned
+.ui-panel-info {
+  position: absolute;
+  top: 2%;
+  right: 22%;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+// Score Panel (scoreboard) - independently positioned
+.ui-panel-score {
+  position: absolute;
+  top: 2%;
+  right: 2%;
+  z-index: 100;
 }
 
 // Center panel (bidding, trump selection, etc)

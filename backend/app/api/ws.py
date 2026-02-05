@@ -26,8 +26,10 @@ router = APIRouter()
 
 BOT_SEATS = {0, 2}
 
-# 5 seconds delay to display completed trick
+# Delay to display completed trick (4 cards visible)
 TRICK_DISPLAY_DELAY_SECONDS = 3
+# Pause duration for empty table between tricks
+EMPTY_TABLE_PAUSE_SECONDS = 1
 
 
 async def _send_state(websocket: WebSocket, state) -> None:
@@ -591,13 +593,19 @@ async def ws_game(websocket: WebSocket, game_id: str) -> None:
                 try:
                     apply_reveal_choice(state, seat, reveal)
 
-                    # If revealing trump completed trick (4 cards), send state and wait
-                    # before clearing, so the completed trick is visible
-                    if len(state.s) == 4:
-                        await _send_state(websocket, state)
-                        await asyncio.sleep(TRICK_DISPLAY_DELAY_SECONDS)
+                    # Send state immediately so reveal choice is shown
+                    await _send_state(websocket, state)
 
-                    resolve_if_catch_complete(state)
+                    # If revealing trump completed trick (4 cards), wait then show empty table
+                    if len(state.s) == 4:
+                        await asyncio.sleep(TRICK_DISPLAY_DELAY_SECONDS)
+                        # Clear the trick and send empty state for smooth transition
+                        resolve_if_catch_complete(state)
+                        await _send_state(websocket, state)
+                        await asyncio.sleep(EMPTY_TABLE_PAUSE_SECONDS)
+                    else:
+                        resolve_if_catch_complete(state)
+
                     await _advance_bots_until_human_any_phase(
                         state, pool, bot_sem, websocket, game_id
                     )
@@ -624,13 +632,19 @@ async def ws_game(websocket: WebSocket, game_id: str) -> None:
                 try:
                     apply_play_card(state, seat, card_id)
 
-                    # If human completed trick (4 cards), send state and wait
-                    # before clearing, so the completed trick is visible
+                    # Send state immediately so human's card appears
                     await _send_state(websocket, state)
+
+                    # If human completed trick (4 cards), wait then show empty table
                     if len(state.s) == 4:
                         await asyncio.sleep(TRICK_DISPLAY_DELAY_SECONDS)
+                        # Clear the trick and send empty state for smooth transition
+                        resolve_if_catch_complete(state)
+                        await _send_state(websocket, state)
+                        await asyncio.sleep(EMPTY_TABLE_PAUSE_SECONDS)
+                    else:
+                        resolve_if_catch_complete(state)
 
-                    resolve_if_catch_complete(state)
                     await _advance_bots_until_human_any_phase(
                         state, pool, bot_sem, websocket, game_id
                     )

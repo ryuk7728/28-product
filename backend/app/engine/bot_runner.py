@@ -11,8 +11,10 @@ from app.engine.play_engine import (
     resolve_if_catch_complete,
 )
 
-# 5 seconds delay to display completed trick
+# Delay to display completed trick (4 cards visible)
 TRICK_DISPLAY_DELAY_SECONDS = 3
+# Pause duration for empty table between tricks
+EMPTY_TABLE_PAUSE_SECONDS = 1
 
 BOT_SEATS = {0, 2}
 
@@ -52,5 +54,9 @@ async def advance_bots_until_human(
         if len(state.s) == 4:
             await send_state_fn(websocket, state)
             await asyncio.sleep(TRICK_DISPLAY_DELAY_SECONDS)
-
-        resolve_if_catch_complete(state)
+            # Clear the trick and send empty state for smooth transition
+            resolve_if_catch_complete(state)
+            await send_state_fn(websocket, state)
+            await asyncio.sleep(EMPTY_TABLE_PAUSE_SECONDS)
+        else:
+            resolve_if_catch_complete(state)
