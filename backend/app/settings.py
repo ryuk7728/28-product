@@ -29,6 +29,20 @@ def _get_int_optional(name: str) -> int | None:
     return int(val)
 
 
+def _get_str(name: str, default: str) -> str:
+    val = os.getenv(name)
+    if val is None:
+        return default
+    return val
+
+
+def _get_str_optional(name: str) -> str | None:
+    val = os.getenv(name)
+    if val is None or val.strip() == "":
+        return None
+    return val
+
+
 @dataclass(frozen=True)
 class Settings:
     debug: bool = _get_bool("APP_DEBUG", True)
@@ -42,6 +56,12 @@ class Settings:
 
     max_concurrent_bot_thinking: int = _get_int(
         "APP_MAX_CONCURRENT_BOT_THINKING", 1
+    )
+
+    # Rollout backend (local or ray)
+    rollout_backend: str = _get_str("APP_ROLLOUT_BACKEND", "local").strip().lower()
+    ray_address: str | None = _get_str_optional("RAY_ADDRESS") or _get_str_optional(
+        "APP_RAY_ADDRESS"
     )
 
     # k control

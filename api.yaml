@@ -1,0 +1,33 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: game28-api
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: game28-api
+  template:
+    metadata:
+      labels:
+        app: game28-api
+    spec:
+      containers:
+        - name: api
+          image: 887395463771.dkr.ecr.us-east-1.amazonaws.com/28-backend:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8000
+          env:
+          - name: APP_ROLLOUT_BACKEND
+            value: "ray"
+          - name: RAY_ADDRESS
+            value: "ray://raycluster-head-svc.ray:10001"
+          - name: APP_K_OVERRIDE
+            value: "1"
+          - name: APP_WORKERS
+            value: "1"
+          - name: APP_ROLLOUTS
+            value: "500"
+

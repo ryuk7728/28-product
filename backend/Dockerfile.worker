@@ -1,0 +1,15 @@
+FROM rayproject/ray:2.9.0-py310
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+# Install minimal deps (avoid overwriting Ray's bundled deps)
+COPY backend/requirements.worker.txt /app/requirements.worker.txt
+RUN pip install --no-cache-dir -r /app/requirements.worker.txt
+
+# Copy application code
+COPY backend/app /app/app
+
+ENV PYTHONPATH=/app

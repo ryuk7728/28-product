@@ -23,6 +23,44 @@ from app.legacy import minimax as legacy_minimax
 # Worker-side helpers (picklable)
 # -----------------------------
 
+_ray_inited = False
+_ray_rollout_remote = None
+
+
+def _ensure_ray():
+    """
+    Lazily initialize Ray for distributed rollouts.
+    """
+    global _ray_inited
+    if _ray_inited:
+        import ray
+
+        return ray
+
+    try:
+        import ray
+    except Exception as e:
+        raise RuntimeError(
+            "APP_ROLLOUT_BACKEND=ray but 'ray' is not installed."
+        ) from e
+
+    address = settings.ray_address
+    if address:
+        ray.init(address=address, ignore_reinit_error=True)
+    else:
+        ray.init(ignore_reinit_error=True)
+
+    _ray_inited = True
+    return ray
+
+
+def _get_ray_rollout_remote():
+    global _ray_rollout_remote
+    ray = _ensure_ray()
+    if _ray_rollout_remote is None:
+        _ray_rollout_remote = ray.remote(rollout_worker)
+    return ray, _ray_rollout_remote
+
 
 def _full_deck_card_ids() -> list[str]:
     return [to_card_id(c) for c in Cards.packOf28()]
@@ -639,18 +677,30 @@ async def choose_action_with_rollouts_parallel(
     base = total_rollouts // worker_count
     rem = total_rollouts % worker_count
 
-    loop = asyncio.get_running_loop()
-    tasks = []
-
-    for i in range(worker_count):
-        n = base + (1 if i < rem else 0)
-        seed = _seed_entropy()
-
-        fut = pool.submit(rollout_worker, snapshot, n, seed)
-        tasks.append(asyncio.wrap_future(fut, loop=loop))
+    use_ray = settings.rollout_backend == "ray"
 
     try:
-        results = await asyncio.gather(*tasks)
+        if use_ray:
+            ray, remote_fn = _get_ray_rollout_remote()
+            refs = []
+            for i in range(worker_count):
+                n = base + (1 if i < rem else 0)
+                seed = _seed_entropy()
+                refs.append(remote_fn.remote(snapshot, n, seed))
+
+            results = await asyncio.to_thread(ray.get, refs)
+        else:
+            loop = asyncio.get_running_loop()
+            tasks = []
+
+            for i in range(worker_count):
+                n = base + (1 if i < rem else 0)
+                seed = _seed_entropy()
+
+                fut = pool.submit(rollout_worker, snapshot, n, seed)
+                tasks.append(asyncio.wrap_future(fut, loop=loop))
+
+            results = await asyncio.gather(*tasks)
     except Exception as e:
         msg = str(e)
         if "ROLL_OUT_CRASH_DUMP=" in msg:

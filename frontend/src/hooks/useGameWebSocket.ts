@@ -55,10 +55,17 @@ export function useGameWebSocket(
       return;
     }
 
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const host = window.location.hostname;
-    const port = 8000; // Backend port
-    const wsUrl = `${protocol}//${host}:${port}/ws/games/${gameId}`;
+    const wsBase = import.meta.env.VITE_WS_BASE_URL as string | undefined;
+    let wsUrl: string;
+    if (wsBase && wsBase.trim() !== "") {
+      const trimmed = wsBase.replace(/\/$/, "");
+      wsUrl = `${trimmed}/ws/games/${gameId}`;
+    } else {
+      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+      const host = window.location.hostname;
+      const port = 8000; // Backend port
+      wsUrl = `${protocol}//${host}:${port}/ws/games/${gameId}`;
+    }
 
     console.log("[WS] Connecting to:", wsUrl);
     const ws = new WebSocket(wsUrl);

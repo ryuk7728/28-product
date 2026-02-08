@@ -1,0 +1,52 @@
+apiVersion: ray.io/v1
+kind: RayCluster
+metadata:
+  name: raycluster
+  namespace: ray
+spec:
+  rayVersion: "2.9.0"
+  headGroupSpec:
+    serviceType: ClusterIP
+    rayStartParams:
+      dashboard-host: "0.0.0.0"
+      ray-client-server-port: "10001"
+    template:
+      spec:
+        containers:
+          - name: ray-head
+            image: 887395463771.dkr.ecr.us-east-1.amazonaws.com/28-worker:pilot
+            imagePullPolicy: Always
+            resources:
+              requests:
+                cpu: "1"
+                memory: "2Gi"
+              limits:
+                cpu: "1"
+                memory: "2Gi"
+  workerGroupSpecs:
+    - groupName: workers
+      replicas: 4
+      minReplicas: 4
+      maxReplicas: 4
+      rayStartParams:
+        num-cpus: "1"
+      template:
+        spec:
+          tolerations:
+            - key: "ray-worker"
+              operator: "Equal"
+              value: "true"
+              effect: "NoSchedule"
+          nodeSelector:
+            role: ray-worker
+          containers:
+            - name: ray-worker
+              image: 887395463771.dkr.ecr.us-east-1.amazonaws.com/28-worker:pilot
+              imagePullPolicy: Always
+              resources:
+                requests:
+                  cpu: "1"
+                  memory: "4Gi"
+                limits:
+                  cpu: "1"
+                  memory: "4Gi"

@@ -1,0 +1,19 @@
+apiVersion: eksctl.io/v1alpha5
+kind: ClusterConfig
+
+metadata:
+  name: game28
+  region: us-east-1
+
+managedNodeGroups:
+  - name: ray-workers-small
+    instanceType: m7i.large
+    desiredCapacity: 4
+    minSize: 4
+    maxSize: 4
+    labels:
+      role: ray-worker
+    taints:
+      - key: "ray-worker"
+        value: "true"
+        effect: "NoSchedule"

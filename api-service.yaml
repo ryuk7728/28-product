@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: game28-api
+  namespace: default
+spec:
+  type: LoadBalancer
+  selector:
+    app: game28-api
+  ports:
+    - port: 80
+      targetPort: 8000
+      protocol: TCP
