@@ -7,6 +7,7 @@ import asyncio
 import os
 import time
 import random
+import threading
 from collections import Counter
 from concurrent.futures import ProcessPoolExecutor
 from typing import Any
@@ -25,6 +26,36 @@ from app.legacy import minimax as legacy_minimax
 
 _ray_inited = False
 _ray_rollout_remote = None
+
+_rollout_metrics_lock = threading.Lock()
+_rollout_metrics_count = 0
+_rollout_metrics_last_ts: float | None = None
+
+
+def _record_rollouts(n: int) -> None:
+    if not settings.rollout_metrics:
+        return
+
+    global _rollout_metrics_count, _rollout_metrics_last_ts
+
+    now = time.monotonic()
+    interval = max(1.0, float(settings.rollout_metrics_interval))
+
+    with _rollout_metrics_lock:
+        if _rollout_metrics_last_ts is None:
+            _rollout_metrics_last_ts = now
+
+        _rollout_metrics_count += n
+        elapsed = now - _rollout_metrics_last_ts
+
+        if elapsed >= interval:
+            rps = _rollout_metrics_count / elapsed if elapsed > 0 else 0.0
+            print(
+                f"[rollout-metrics] rollouts/sec={rps:.1f} "
+                f"interval={elapsed:.1f}s total={_rollout_metrics_count}"
+            )
+            _rollout_metrics_last_ts = now
+            _rollout_metrics_count = 0
 
 
 def _ensure_ray():
@@ -716,6 +747,8 @@ async def choose_action_with_rollouts_parallel(
         if legal.type == "REVEAL_CHOICE":
             return ("REVEAL", {"seatIndex": bot_seat, "reveal": False})
         return ("PLAY", {"seatIndex": bot_seat, "cardId": legal.cardIds[0]})
+
+    _record_rollouts(total_rollouts)
 
     merged: Counter = Counter()
     for d in results:

@@ -22,6 +22,13 @@ def _get_int(name: str, default: int) -> int:
     return int(val)
 
 
+def _get_float(name: str, default: float) -> float:
+    val = os.getenv(name)
+    if val is None or val.strip() == "":
+        return default
+    return float(val)
+
+
 def _get_int_optional(name: str) -> int | None:
     val = os.getenv(name)
     if val is None or val.strip() == "":
@@ -53,6 +60,10 @@ class Settings:
 
     # NEW: retries for constraint-aware rollout dealing
     rollout_deal_retries: int = _get_int("APP_ROLLOUT_DEAL_RETRIES", 30)
+
+    # Rollout metrics logging
+    rollout_metrics: bool = _get_bool("APP_ROLLOUT_METRICS", False)
+    rollout_metrics_interval: float = _get_float("APP_ROLLOUT_METRICS_INTERVAL", 10.0)
 
     max_concurrent_bot_thinking: int = _get_int(
         "APP_MAX_CONCURRENT_BOT_THINKING", 1
