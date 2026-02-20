@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import os
+from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -52,6 +53,8 @@ def _get_str_optional(name: str) -> str | None:
 
 @dataclass(frozen=True)
 class Settings:
+    app_dir: Path = Path(__file__).resolve().parent
+    backend_dir: Path = app_dir.parent
     debug: bool = _get_bool("APP_DEBUG", True)
 
     # Rollout bot config
@@ -77,6 +80,13 @@ class Settings:
 
     # k control
     k_override: int | None = _get_int_optional("APP_K_OVERRIDE")
+
+    # Fixed-deck mode (for deterministic reproduction)
+    fixed_deck_enabled: bool = _get_bool("APP_FIXED_DECK_ENABLED", False)
+    fixed_deck_path: str = _get_str(
+        "APP_FIXED_DECK_PATH",
+        str((Path(__file__).resolve().parent.parent / "fixed_deck.txt").as_posix()),
+    )
 
     cors_origins: tuple[str, ...] = (
         "http://localhost:5173",

@@ -285,7 +285,8 @@ async def _advance_bots_until_human_any_phase(
             )
 
             # Rule 1: if bot is the first bidder and canRedeal => always redeal
-            if state.bidding_r1_step == 0 and rules.can_redeal:
+            # (disabled in fixed deck mode to keep deterministic progression)
+            if state.bidding_r1_step == 0 and rules.can_redeal and not state.fixed_deck_mode:
                 state.event_log.append(f"P{seat+1} requested redeal.")
                 game_manager.redeal_first4_in_place(state)
                 continue
@@ -590,6 +591,15 @@ async def ws_game(websocket: WebSocket, game_id: str) -> None:
                     )
                     continue
 
+                if len(state.s) == 4:
+                    await websocket.send_json(
+                        {
+                            "type": "ERROR",
+                            "message": "Trick is resolving. Wait for next turn.",
+                        }
+                    )
+                    continue
+
                 try:
                     apply_reveal_choice(state, seat, reveal)
 
@@ -626,6 +636,15 @@ async def ws_game(websocket: WebSocket, game_id: str) -> None:
                 if state.phase != "PLAY":
                     await websocket.send_json(
                         {"type": "ERROR", "message": "Not in PLAY phase."}
+                    )
+                    continue
+
+                if len(state.s) == 4:
+                    await websocket.send_json(
+                        {
+                            "type": "ERROR",
+                            "message": "Trick is resolving. Wait for next turn.",
+                        }
                     )
                     continue
 

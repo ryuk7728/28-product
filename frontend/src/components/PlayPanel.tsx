@@ -58,7 +58,10 @@ export function PlayPanel({
         </div>
       )}
 
-      {state.phase === "PLAY" && actions && actions.type === "REVEAL_CHOICE" && (
+      {state.phase === "PLAY" &&
+        actions &&
+        actions.type === "REVEAL_CHOICE" &&
+        state.play.trickCards.length < 4 && (
         <div className="mt-4">
           <div className="text-sm font-semibold">
             Player {actions.seatIndex + 1}: Reveal trump?

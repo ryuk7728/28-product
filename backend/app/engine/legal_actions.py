@@ -66,6 +66,11 @@ def get_legal_actions(state: GameState) -> dict:
         }
 
     if state.phase == "PLAY":
+        # During trick persistence window (4 cards visible), suppress actions.
+        # This prevents transient REVEAL/PLAY prompts before catch resolution.
+        if len(state.s) == 4:
+            return {"type": "NO_ACTION", "seatIndex": state.turn_index}
+
         legal = compute_play_legal_actions(state)
         if legal.type == "REVEAL_CHOICE":
             return {

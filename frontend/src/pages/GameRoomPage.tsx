@@ -276,7 +276,8 @@ export function GameRoomPage({ gameId, onGameEnd }: Props) {
       phase === "PLAY" &&
       legal &&
       legal.type === "REVEAL_CHOICE" &&
-      SEAT_TYPES[legal.seatIndex] === "human"
+      SEAT_TYPES[legal.seatIndex] === "human" &&
+      play.trickCards.length < 4
     ) {
       return (
         <RevealChoicePanel

@@ -172,11 +172,14 @@ export const GamePage: React.FC<GamePageProps> = ({ gameId, onGameEnd }) => {
   // Handle reveal trump choice
   const handleRevealChoice = useCallback(
     (reveal: boolean) => {
-      if (legalActions?.type === "REVEAL_CHOICE") {
+      if (
+        legalActions?.type === "REVEAL_CHOICE" &&
+        (gameState?.play?.trickCards?.length ?? 0) < 4
+      ) {
         sendRevealChoice(legalActions.seatIndex, reveal);
       }
     },
-    [legalActions, sendRevealChoice]
+    [legalActions, gameState?.play?.trickCards?.length, sendRevealChoice]
   );
 
   // Handle new game
@@ -310,7 +313,11 @@ export const GamePage: React.FC<GamePageProps> = ({ gameId, onGameEnd }) => {
   // Render center content based on phase
   const renderCenterContent = () => {
     // Handle reveal choice - this takes priority during PLAY phase
-    if (legalActions?.type === "REVEAL_CHOICE" && isHumanTurn) {
+    if (
+      legalActions?.type === "REVEAL_CHOICE" &&
+      isHumanTurn &&
+      trickCards.length < 4
+    ) {
       const canReveal = legalActions.options?.includes(true);
       const canKeepHidden = legalActions.options?.includes(false);
       const isBidder = legalActions.seatIndex === finalBidderSeat;

@@ -4,8 +4,10 @@ import random
 import uuid
 
 from app.engine.cards_adapter import from_card_id
+from app.engine.fixed_deck import load_fixed_deck_cards
 from app.engine.state import GameState
 from app.engine.validator import validate_first4_hands
+from app.settings import settings
 from app.legacy.cards import Cards
 
 
@@ -25,17 +27,29 @@ class GameManager:
         if starting_bidder_index < 0 or starting_bidder_index > 3:
             raise ValueError("startingBidderIndex must be in 0..3")
 
-        deck = Cards.packOf28()  # 32 cards
-        random.shuffle(deck)
+        fixed_mode = settings.fixed_deck_enabled
+        if fixed_mode:
+            seat_hands = load_fixed_deck_cards(settings.fixed_deck_path)
+            players_cards = [hand[:4] for hand in seat_hands]
+            # Keep seat order so auto_deal_rest can append exact remaining 4 per seat.
+            remaining = (
+                seat_hands[0][4:8]
+                + seat_hands[1][4:8]
+                + seat_hands[2][4:8]
+                + seat_hands[3][4:8]
+            )
+        else:
+            deck = Cards.packOf28()  # 32 cards
+            random.shuffle(deck)
 
-        # Deal first 4 cards to each player
-        players_cards = [
-            deck[0:4],
-            deck[4:8],
-            deck[8:12],
-            deck[12:16],
-        ]
-        remaining = deck[16:32]
+            # Deal first 4 cards to each player
+            players_cards = [
+                deck[0:4],
+                deck[4:8],
+                deck[8:12],
+                deck[12:16],
+            ]
+            remaining = deck[16:32]
 
         bidding_order = [(starting_bidder_index + i) % 4 for i in range(4)]
 
@@ -48,8 +62,11 @@ class GameManager:
             players_cards=[list(h) for h in players_cards],
             draw_pile=list(remaining),
             auto_deal=True,  # Flag to indicate auto-deal mode
+            fixed_deck_mode=fixed_mode,
             event_log=[
-                "Game created (auto-deal).",
+                "Game created (auto-deal)."
+                if not fixed_mode
+                else "Game created (auto-deal, fixed deck mode).",
                 f"Starting bidder: P{starting_bidder_index + 1}",
             ],
         )
@@ -65,8 +82,9 @@ class GameManager:
         if len(state.draw_pile) != 16:
             raise ValueError(f"Expected 16 cards in draw pile, got {len(state.draw_pile)}")
 
-        # Shuffle the draw pile before dealing
-        random.shuffle(state.draw_pile)
+        # Shuffle only in normal mode. In fixed deck mode draw_pile is seat-ordered.
+        if not state.fixed_deck_mode:
+            random.shuffle(state.draw_pile)
 
         # Deal 4 cards to each player
         for seat in range(4):
@@ -74,7 +92,11 @@ class GameManager:
                 card = state.draw_pile.pop(0)
                 state.players_cards[seat].append(card)
 
-        state.event_log.append("Auto-deal: remaining 16 cards distributed.")
+        state.event_log.append(
+            "Auto-deal: remaining 16 cards distributed."
+            if not state.fixed_deck_mode
+            else "Auto-deal: remaining 16 cards distributed from fixed deck."
+        )
 
     def create_game_manual_first4(
         self,
@@ -104,6 +126,7 @@ class GameManager:
             bidding_order=bidding_order,
             players_cards=players_cards,
             draw_pile=remaining,
+            fixed_deck_mode=False,
             event_log=[
                 "Game created (manual first-4).",
                 f"Starting bidder: P{starting_bidder_index + 1}",
@@ -128,11 +151,21 @@ class GameManager:
           - reset bidding state to BIDDING_R1 step 0
           - clear any previously chosen concealed trump etc.
         """
-        deck = Cards.packOf28()
-        random.shuffle(deck)
+        if state.fixed_deck_mode:
+            seat_hands = load_fixed_deck_cards(settings.fixed_deck_path)
+            new_players = [hand[:4] for hand in seat_hands]
+            new_draw = (
+                seat_hands[0][4:8]
+                + seat_hands[1][4:8]
+                + seat_hands[2][4:8]
+                + seat_hands[3][4:8]
+            )
+        else:
+            deck = Cards.packOf28()
+            random.shuffle(deck)
 
-        new_players = [deck[0:4], deck[4:8], deck[8:12], deck[12:16]]
-        new_draw = deck[16:32]
+            new_players = [deck[0:4], deck[4:8], deck[8:12], deck[12:16]]
+            new_draw = deck[16:32]
 
         state.players_cards = [list(h) for h in new_players]
         state.draw_pile = list(new_draw)
@@ -177,7 +210,11 @@ class GameManager:
         state.play_players = []
         state.winnerTeam = None
 
-        state.event_log.append("Redeal performed (first-4 re-dealt).")
+        state.event_log.append(
+            "Redeal performed (first-4 re-dealt)."
+            if not state.fixed_deck_mode
+            else "Redeal performed from fixed deck file (first-4 re-dealt)."
+        )
 
 
 game_manager = GameManager()

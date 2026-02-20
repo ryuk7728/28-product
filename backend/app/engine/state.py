@@ -72,6 +72,8 @@ class GameState:
 
     # Auto-deal mode flag (if True, skip MANUAL_DEAL_REST phase)
     auto_deal: bool = False
+    # Deterministic fixed deck mode (cards loaded from file)
+    fixed_deck_mode: bool = False
 
     # NEW: Suit void knowledge (persistent during PLAY; void stays void)
     # Rows: Hearts, Diamonds, Spades, Clubs; Cols: seat 0..3
@@ -160,6 +162,7 @@ class GameState:
             ],
             "drawPileCount": len(self.draw_pile),
             "autoDeal": self.auto_deal,
+            "fixedDeckMode": self.fixed_deck_mode,
             "bidsR1": self.bids_r1_by_seat,
             "bidsR2": self.bids_r2_by_seat,
             "round1BidderSeat": self.round1_bidder_seat,
