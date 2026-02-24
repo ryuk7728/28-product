@@ -19,6 +19,8 @@ export interface PlayerAvatarProps {
   isBidder?: boolean;
   currentBid?: number | null;
   isThinking?: boolean;
+  speechBubbleText?: string | null;
+  speechBubbleDirection?: "left" | "right";
 }
 
 export const PlayerAvatar: React.FC<PlayerAvatarProps> = ({
@@ -27,6 +29,8 @@ export const PlayerAvatar: React.FC<PlayerAvatarProps> = ({
   isBidder = false,
   currentBid,
   isThinking = false,
+  speechBubbleText = null,
+  speechBubbleDirection,
 }) => {
   const name = PLAYER_NAMES[seatIndex];
   const isBot = SEAT_TYPES[seatIndex] === "bot";
@@ -34,6 +38,12 @@ export const PlayerAvatar: React.FC<PlayerAvatarProps> = ({
 
   return (
     <div className="player-info">
+      {speechBubbleText && speechBubbleDirection && (
+        <div className={`speech-bubble ${speechBubbleDirection}`}>
+          {speechBubbleText}
+        </div>
+      )}
+
       {/* Main player tag */}
       <div className={`player-tag ${isActive ? "active" : ""}`}>
         {isActive ? (

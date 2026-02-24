@@ -20,6 +20,7 @@ export interface PlayerData {
   isBidder: boolean;
   currentBid: number | null;
   isThinking: boolean;
+  speechBubbleText?: string | null;
   handContent: ReactNode;
 }
 
@@ -63,6 +64,10 @@ export const GameArena: React.FC<GameArenaProps> = ({
                     isBidder={player.isBidder}
                     currentBid={player.currentBid}
                     isThinking={player.isThinking}
+                    speechBubbleText={player.speechBubbleText}
+                    speechBubbleDirection={
+                      direction === "west" ? "left" : direction === "east" ? "right" : undefined
+                    }
                   />
                 </>
               ) : direction === "north" ? (
@@ -73,6 +78,10 @@ export const GameArena: React.FC<GameArenaProps> = ({
                     isBidder={player.isBidder}
                     currentBid={player.currentBid}
                     isThinking={player.isThinking}
+                    speechBubbleText={player.speechBubbleText}
+                    speechBubbleDirection={
+                      direction === "west" ? "left" : direction === "east" ? "right" : undefined
+                    }
                   />
                   {player.handContent}
                 </>
@@ -85,6 +94,10 @@ export const GameArena: React.FC<GameArenaProps> = ({
                     isBidder={player.isBidder}
                     currentBid={player.currentBid}
                     isThinking={player.isThinking}
+                    speechBubbleText={player.speechBubbleText}
+                    speechBubbleDirection={
+                      direction === "west" ? "left" : direction === "east" ? "right" : undefined
+                    }
                   />
                   {player.handContent}
                 </>

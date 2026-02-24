@@ -7,7 +7,7 @@
  * - Renders the new UI components
  */
 
-import React, { useState, useCallback, useMemo, useEffect } from "react";
+import React, { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import { GameArena } from "../components/table";
 import { PlayerHand } from "../components/player";
 import { TrickArea } from "../components/trick";
@@ -26,11 +26,12 @@ import {
 } from "../components/panels";
 import { useGameWebSocket } from "../hooks/useGameWebSocket";
 import type { Card as CardType } from "../api/types";
-import { PLAYER_NAMES } from "../config/constants";
+import { PLAYER_NAMES, BOT_BID_BUBBLE_DELAY_MS } from "../config/constants";
 import "../styles/index.scss";
 
 // Human seats (You = 1, Partner = 3)
 const HUMAN_SEATS = new Set([1, 3]);
+const BOT_SEATS = new Set([0, 2]);
 
 export interface GamePageProps {
   gameId: string;
@@ -44,6 +45,13 @@ export const GamePage: React.FC<GamePageProps> = ({ gameId, onGameEnd }) => {
   const [selectedCard, setSelectedCard] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [abortReason, setAbortReason] = useState<string | null>(null);
+  const [botBidBubble, setBotBidBubble] = useState<{
+    seatIndex: number;
+    text: string;
+  } | null>(null);
+  const [isBotBidDelayActive, setIsBotBidDelayActive] = useState(false);
+  const botBidDelayTimerRef = useRef<number | null>(null);
+  const processedBotBidEventIndexRef = useRef<number>(-1);
 
   // Trump reveal overlay state
   const [showTrumpRevealOverlay, setShowTrumpRevealOverlay] = useState(false);
@@ -118,29 +126,91 @@ export const GamePage: React.FC<GamePageProps> = ({ gameId, onGameEnd }) => {
     setPrevTrumpRevealed(currentTrumpRevealed);
   }, [gameState?.play?.trumpReveal, gameState?.play?.trumpSuit, gameState?.play?.trumpCardId, prevTrumpRevealed]);
 
+  // Show bot bid/pass speech bubble and delay human bidding panel for natural pacing.
+  useEffect(() => {
+    if (!gameState || !legalActions) return;
+
+    const isBiddingPhase = phase === "BIDDING_R1" || phase === "BIDDING_R2";
+    const isHumanBidTurn =
+      isBiddingPhase &&
+      (legalActions.type === "BID_R1" || legalActions.type === "BID_R2") &&
+      HUMAN_SEATS.has(legalActions.seatIndex);
+
+    if (!isHumanBidTurn) {
+      return;
+    }
+
+    const logs = gameState.eventLog || [];
+    const lastIndex = logs.length - 1;
+    if (lastIndex < 0 || processedBotBidEventIndexRef.current === lastIndex) {
+      return;
+    }
+
+    const lastLog = logs[lastIndex];
+    const m = lastLog.match(/^P([1-4])\s+(bid\s+(\d+)|passed(?:\s+\(R2\))?)\.$/i);
+    if (!m) return;
+
+    const seatIndex = Number(m[1]) - 1;
+    if (!BOT_SEATS.has(seatIndex)) return;
+
+    const bidAmount = m[3];
+    const bubbleText = bidAmount ? `Bid ${bidAmount}` : "Pass";
+
+    processedBotBidEventIndexRef.current = lastIndex;
+    setBotBidBubble({ seatIndex, text: bubbleText });
+    setIsBotBidDelayActive(true);
+
+    if (botBidDelayTimerRef.current !== null) {
+      window.clearTimeout(botBidDelayTimerRef.current);
+    }
+    botBidDelayTimerRef.current = window.setTimeout(() => {
+      setIsBotBidDelayActive(false);
+      setBotBidBubble(null);
+      botBidDelayTimerRef.current = null;
+    }, BOT_BID_BUBBLE_DELAY_MS);
+  }, [gameState, legalActions, phase]);
+
+  useEffect(() => {
+    return () => {
+      if (botBidDelayTimerRef.current !== null) {
+        window.clearTimeout(botBidDelayTimerRef.current);
+      }
+    };
+  }, []);
+
   // Handle bid submission
   const handleBid = useCallback(
     (value: number) => {
-      if (legalActions?.type === "BID_R1" || legalActions?.type === "BID_R2") {
+      if (
+        !isBotBidDelayActive &&
+        (legalActions?.type === "BID_R1" || legalActions?.type === "BID_R2")
+      ) {
         sendBid(legalActions.seatIndex, value);
       }
     },
-    [legalActions, sendBid]
+    [isBotBidDelayActive, legalActions, sendBid]
   );
 
   // Handle pass (bid 0)
   const handlePass = useCallback(() => {
-    if (legalActions?.type === "BID_R1" || legalActions?.type === "BID_R2") {
+    if (
+      !isBotBidDelayActive &&
+      (legalActions?.type === "BID_R1" || legalActions?.type === "BID_R2")
+    ) {
       sendBid(legalActions.seatIndex, 0);
     }
-  }, [legalActions, sendBid]);
+  }, [isBotBidDelayActive, legalActions, sendBid]);
 
   // Handle redeal (bid -1)
   const handleRedeal = useCallback(() => {
-    if (legalActions?.type === "BID_R1" && legalActions.canRedeal) {
+    if (
+      !isBotBidDelayActive &&
+      legalActions?.type === "BID_R1" &&
+      legalActions.canRedeal
+    ) {
       sendBid(legalActions.seatIndex, -1);
     }
-  }, [legalActions, sendBid]);
+  }, [isBotBidDelayActive, legalActions, sendBid]);
 
   // Handle trump card selection
   const handleTrumpSelect = useCallback(
@@ -276,12 +346,18 @@ export const GamePage: React.FC<GamePageProps> = ({ gameId, onGameEnd }) => {
           ? gameState.bidsR2[seatIndex]
           : gameState.bidsR1[seatIndex];
 
+      const speechBubbleText =
+        botBidBubble && botBidBubble.seatIndex === seatIndex
+          ? botBidBubble.text
+          : null;
+
       return {
         seatIndex,
         isActive,
         isBidder,
         currentBid: playerBid > 0 ? playerBid : null,
         isThinking: isBot && isActive,
+        speechBubbleText,
         handContent: (
           <PlayerHand
             cards={cards}
@@ -306,6 +382,7 @@ export const GamePage: React.FC<GamePageProps> = ({ gameId, onGameEnd }) => {
     showBotCards,
     legalCardIds,
     selectedCard,
+    botBidBubble,
     getPlayerCards,
     handleCardClick,
   ]);
@@ -366,6 +443,25 @@ export const GamePage: React.FC<GamePageProps> = ({ gameId, onGameEnd }) => {
           playedCards={playedCards}
           currentSuit={gameState?.play?.currentSuit}
         />
+      );
+    }
+
+    // Bidding delay: keep natural pacing after bot call/pass before enabling human input.
+    if (
+      isBotBidDelayActive &&
+      (phase === "BIDDING_R1" || phase === "BIDDING_R2") &&
+      (legalActions?.type === "BID_R1" || legalActions?.type === "BID_R2") &&
+      HUMAN_SEATS.has(legalActions.seatIndex)
+    ) {
+      return (
+        <div className="game-panel" style={{ textAlign: "center", padding: 24 }}>
+          <div className="panel-title">Waiting...</div>
+          <div className="panel-subtitle">
+            {botBidBubble
+              ? `${PLAYER_NAMES[botBidBubble.seatIndex]}: ${botBidBubble.text}`
+              : "Bot made a call"}
+          </div>
+        </div>
       );
     }
 
