@@ -12,7 +12,9 @@ import { useEffect, useRef, useCallback, useState } from "react";
 import type { GameState, LegalActions, WsMessage } from "../api/types";
 
 export interface UseGameWebSocketOptions {
-  gameId: string;
+  gameId?: string;
+  roomCode?: string;
+  playerToken?: string;
   onStateUpdate?: (state: GameState) => void;
   onLegalActions?: (actions: LegalActions) => void;
   onError?: (message: string) => void;
@@ -34,7 +36,7 @@ export interface UseGameWebSocketReturn {
 export function useGameWebSocket(
   options: UseGameWebSocketOptions
 ): UseGameWebSocketReturn {
-  const { gameId } = options;
+  const { gameId, roomCode, playerToken } = options;
 
   const wsRef = useRef<WebSocket | null>(null);
   const [connected, setConnected] = useState(false);
@@ -47,7 +49,7 @@ export function useGameWebSocket(
 
   // Connect to WebSocket - only depends on gameId
   useEffect(() => {
-    if (!gameId) return;
+    if (!gameId && !roomCode) return;
 
     // Prevent duplicate connections
     if (wsRef.current?.readyState === WebSocket.OPEN ||
@@ -59,12 +61,26 @@ export function useGameWebSocket(
     let wsUrl: string;
     if (wsBase && wsBase.trim() !== "") {
       const trimmed = wsBase.replace(/\/$/, "");
-      wsUrl = `${trimmed}/ws/games/${gameId}`;
+      if (roomCode) {
+        const tokenQuery = playerToken
+          ? `?token=${encodeURIComponent(playerToken)}`
+          : "";
+        wsUrl = `${trimmed}/ws/rooms/${encodeURIComponent(roomCode)}${tokenQuery}`;
+      } else {
+        wsUrl = `${trimmed}/ws/games/${gameId}`;
+      }
     } else {
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
       const host = window.location.hostname;
       const port = 8000; // Backend port
-      wsUrl = `${protocol}//${host}:${port}/ws/games/${gameId}`;
+      if (roomCode) {
+        const tokenQuery = playerToken
+          ? `?token=${encodeURIComponent(playerToken)}`
+          : "";
+        wsUrl = `${protocol}//${host}:${port}/ws/rooms/${encodeURIComponent(roomCode)}${tokenQuery}`;
+      } else {
+        wsUrl = `${protocol}//${host}:${port}/ws/games/${gameId}`;
+      }
     }
 
     console.log("[WS] Connecting to:", wsUrl);
@@ -129,7 +145,7 @@ export function useGameWebSocket(
       }
       wsRef.current = null;
     };
-  }, [gameId]); // Only reconnect when gameId changes
+  }, [gameId, roomCode, playerToken]); // Reconnect when connection identity changes
 
   // Send message helper
   const sendMessage = useCallback((msg: object) => {

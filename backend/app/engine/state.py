@@ -83,6 +83,9 @@ class GameState:
     seat_types: list[str] = field(
         default_factory=lambda: ["bot", "human", "bot", "human"]
     )
+    player_names: list[str] = field(
+        default_factory=lambda: ["T-1000", "You", "Skynet", "Partner"]
+    )
 
     # legacy expects:
     finalBid: int = 0  # 1-indexed bidder seat
@@ -150,6 +153,7 @@ class GameState:
             "turnIndex": self.turn_index,
             "biddingOrder": self.bidding_order,
             "seatTypes": self.seat_types,
+            "playerNames": self.player_names,
             "players": [
                 {
                     "seatIndex": i,
@@ -188,3 +192,31 @@ class GameState:
             },
             "eventLog": self.event_log,
         }
+
+    def to_public_dict_for_viewer(self, viewer_seat_index: int) -> dict:
+        """
+        Public state tailored for one connected human:
+        - The viewer sees their own cards.
+        - All other hands are hidden (only card counts preserved).
+        """
+        data = self.to_public_dict()
+        data["viewerSeatIndex"] = viewer_seat_index
+
+        for p in data["players"]:
+            if p["seatIndex"] == viewer_seat_index:
+                continue
+
+            hidden_cards = [
+                {
+                    "cardId": f"HIDDEN_{p['seatIndex']}_{i}",
+                    "suit": "Hidden",
+                    "rank": "Hidden",
+                    "points": 0,
+                    "order": 0,
+                    "label": "Hidden card",
+                }
+                for i in range(p["cardCount"])
+            ]
+            p["cards"] = hidden_cards
+
+        return data

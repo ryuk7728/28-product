@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.settings import settings
 from app.api.routes import router as http_router
+from app.api.room_routes import router as room_router
 from app.api.ws import router as ws_router
 
 
@@ -36,4 +37,5 @@ app.add_middleware(
 )
 
 app.include_router(http_router)
+app.include_router(room_router)
 app.include_router(ws_router)

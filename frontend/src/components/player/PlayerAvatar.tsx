@@ -15,6 +15,8 @@ import "../../styles/player.scss";
 
 export interface PlayerAvatarProps {
   seatIndex: number;
+  displayName?: string;
+  isBot?: boolean;
   isActive?: boolean;
   isBidder?: boolean;
   currentBid?: number | null;
@@ -25,6 +27,8 @@ export interface PlayerAvatarProps {
 
 export const PlayerAvatar: React.FC<PlayerAvatarProps> = ({
   seatIndex,
+  displayName,
+  isBot,
   isActive = false,
   isBidder = false,
   currentBid,
@@ -32,8 +36,8 @@ export const PlayerAvatar: React.FC<PlayerAvatarProps> = ({
   speechBubbleText = null,
   speechBubbleDirection,
 }) => {
-  const name = PLAYER_NAMES[seatIndex];
-  const isBot = SEAT_TYPES[seatIndex] === "bot";
+  const name = displayName ?? PLAYER_NAMES[seatIndex];
+  const resolvedIsBot = isBot ?? (SEAT_TYPES[seatIndex] === "bot");
   const initial = name.charAt(0).toUpperCase();
 
   return (
@@ -48,7 +52,7 @@ export const PlayerAvatar: React.FC<PlayerAvatarProps> = ({
       <div className={`player-tag ${isActive ? "active" : ""}`}>
         {isActive ? (
           <div className="player-tag-inner">
-            <div className={`player-avatar ${isBot ? "bot" : "human"}`}>
+            <div className={`player-avatar ${resolvedIsBot ? "bot" : "human"}`}>
               {initial}
             </div>
             <span className="player-name">{name}</span>
@@ -56,7 +60,7 @@ export const PlayerAvatar: React.FC<PlayerAvatarProps> = ({
           </div>
         ) : (
           <>
-            <div className={`player-avatar ${isBot ? "bot" : "human"}`}>
+            <div className={`player-avatar ${resolvedIsBot ? "bot" : "human"}`}>
               {initial}
             </div>
             <span className="player-name">{name}</span>
@@ -71,7 +75,7 @@ export const PlayerAvatar: React.FC<PlayerAvatarProps> = ({
       )}
 
       {/* Thinking indicator for bots */}
-      {isThinking && isBot && (
+      {isThinking && resolvedIsBot && (
         <div className="thinking-indicator">
           <span>Thinking</span>
           <div className="thinking-dots">

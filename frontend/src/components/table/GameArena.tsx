@@ -16,6 +16,9 @@ import "../../styles/table.scss";
 
 export interface PlayerData {
   seatIndex: number;
+  renderSeatIndex?: number;
+  displayName?: string;
+  isBot?: boolean;
   isActive: boolean;
   isBidder: boolean;
   currentBid: number | null;
@@ -46,13 +49,14 @@ export const GameArena: React.FC<GameArenaProps> = ({
       {/* Hands container */}
       <div className="hands-container">
         {players.map((player) => {
-          const direction = PLAYER_DIRECTIONS[player.seatIndex];
+          const renderSeatIndex = player.renderSeatIndex ?? player.seatIndex;
+          const direction = PLAYER_DIRECTIONS[renderSeatIndex];
 
           return (
             <div
               key={player.seatIndex}
               className={`player-area ${direction}`}
-              data-seat={player.seatIndex}
+              data-seat={renderSeatIndex}
             >
               {/* For South player, show hand first then avatar */}
               {direction === "south" ? (
@@ -60,6 +64,8 @@ export const GameArena: React.FC<GameArenaProps> = ({
                   {player.handContent}
                   <PlayerAvatar
                     seatIndex={player.seatIndex}
+                    displayName={player.displayName}
+                    isBot={player.isBot}
                     isActive={player.isActive}
                     isBidder={player.isBidder}
                     currentBid={player.currentBid}
@@ -74,6 +80,8 @@ export const GameArena: React.FC<GameArenaProps> = ({
                 <>
                   <PlayerAvatar
                     seatIndex={player.seatIndex}
+                    displayName={player.displayName}
+                    isBot={player.isBot}
                     isActive={player.isActive}
                     isBidder={player.isBidder}
                     currentBid={player.currentBid}
@@ -90,6 +98,8 @@ export const GameArena: React.FC<GameArenaProps> = ({
                 <>
                   <PlayerAvatar
                     seatIndex={player.seatIndex}
+                    displayName={player.displayName}
+                    isBot={player.isBot}
                     isActive={player.isActive}
                     isBidder={player.isBidder}
                     currentBid={player.currentBid}

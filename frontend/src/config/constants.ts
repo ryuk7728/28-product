@@ -63,7 +63,7 @@ export const TRICK_DISPLAY_DELAY_MS = 3000;     // Time to show completed trick 
 export const TRUMP_REVEAL_DISPLAY_MS = 5000;    // Time to show revealed trump (5 seconds)
 export const DEAL_CARD_DELAY_MS = 80;           // Delay between dealing each card
 export const BOT_THINKING_DELAY_MS = 500;       // Fake thinking time for bots
-export const BOT_BID_BUBBLE_DELAY_MS = 3000;   // Delay after bot bid/pass before enabling human bidding
+export const BOT_BID_BUBBLE_DELAY_MS = 2000;   // Delay after bot bid/pass before enabling human bidding
 export const CARD_ANIMATION_DURATION_MS = 300;  // Duration of card movement
 
 // =============================================================================

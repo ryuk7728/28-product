@@ -87,6 +87,7 @@ class Settings:
         "APP_FIXED_DECK_PATH",
         str((Path(__file__).resolve().parent.parent / "fixed_deck.txt").as_posix()),
     )
+    room_ttl_seconds: int = _get_int("APP_ROOM_TTL_SECONDS", 24 * 60 * 60)
 
     cors_origins: tuple[str, ...] = (
         "http://localhost:5173",

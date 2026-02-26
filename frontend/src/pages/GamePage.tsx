@@ -29,19 +29,27 @@ import type { Card as CardType } from "../api/types";
 import { PLAYER_NAMES, BOT_BID_BUBBLE_DELAY_MS } from "../config/constants";
 import "../styles/index.scss";
 
-// Human seats (You = 1, Partner = 3)
-const HUMAN_SEATS = new Set([1, 3]);
 const BOT_SEATS = new Set([0, 2]);
 
 export interface GamePageProps {
   gameId: string;
+  roomCode?: string;
+  playerToken?: string;
+  playerSeatIndex?: number;
+  controlledSeatIndices?: number[];
   onGameEnd?: () => void;
 }
 
-export const GamePage: React.FC<GamePageProps> = ({ gameId, onGameEnd }) => {
+export const GamePage: React.FC<GamePageProps> = ({
+  gameId,
+  roomCode,
+  playerToken,
+  playerSeatIndex = 1,
+  controlledSeatIndices,
+  onGameEnd,
+}) => {
 
   // Local UI state
-  const [showBotCards, setShowBotCards] = useState(false);
   const [selectedCard, setSelectedCard] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [abortReason, setAbortReason] = useState<string | null>(null);
@@ -69,6 +77,8 @@ export const GamePage: React.FC<GamePageProps> = ({ gameId, onGameEnd }) => {
     sendRevealChoice,
   } = useGameWebSocket({
     gameId: gameId || "",
+    roomCode,
+    playerToken,
     onError: (msg) => {
       setErrorMessage(msg);
       setTimeout(() => setErrorMessage(null), 3000);
@@ -83,9 +93,50 @@ export const GamePage: React.FC<GamePageProps> = ({ gameId, onGameEnd }) => {
   const turnIndex = gameState?.turnIndex ?? -1;
   const finalBidderSeat = gameState?.finalBidderSeat;
   const finalBidValue = gameState?.finalBidValue;
+  const playerNamesFromState = gameState?.playerNames ?? PLAYER_NAMES;
 
-  // Check if it's a human's turn
-  const isHumanTurn = HUMAN_SEATS.has(turnIndex);
+  const effectiveControlledSeats = useMemo(() => {
+    const raw = controlledSeatIndices && controlledSeatIndices.length > 0
+      ? controlledSeatIndices
+      : [1, 3];
+    const dedup = Array.from(new Set(raw.map((s) => Number(s))));
+    return dedup.filter((s) => s >= 0 && s <= 3);
+  }, [controlledSeatIndices]);
+
+  const controlledSeatSet = useMemo(
+    () => new Set(effectiveControlledSeats),
+    [effectiveControlledSeats]
+  );
+
+  const primarySeat = effectiveControlledSeats[0] ?? playerSeatIndex;
+  const isSingleControlledSeat = effectiveControlledSeats.length === 1;
+
+  const mapSeatToRenderSeat = useCallback(
+    (seatIndex: number): number => {
+      if (!isSingleControlledSeat) {
+        return seatIndex;
+      }
+      if (primarySeat === 3) {
+        return seatIndex ^ 2;
+      }
+      return seatIndex;
+    },
+    [isSingleControlledSeat, primarySeat]
+  );
+
+  const getSeatDisplayName = useCallback(
+    (seatIndex: number): string => {
+      const resolved = playerNamesFromState?.[seatIndex];
+      if (resolved && String(resolved).trim()) {
+        return String(resolved).trim();
+      }
+      return PLAYER_NAMES[seatIndex] ?? `P${seatIndex + 1}`;
+    },
+    [playerNamesFromState]
+  );
+
+  // Check if this client controls the current turn seat
+  const isHumanTurn = controlledSeatSet.has(turnIndex);
 
   // Get current player's cards
   const getPlayerCards = useCallback(
@@ -106,10 +157,10 @@ export const GamePage: React.FC<GamePageProps> = ({ gameId, onGameEnd }) => {
     const leaderIndex = gameState.play.leaderIndex;
     return gameState.play.trickCards.map((card, idx) => ({
       cardId: card.cardId,
-      seatIndex: (leaderIndex + idx) % 4,
+      seatIndex: mapSeatToRenderSeat((leaderIndex + idx) % 4),
       isWinning: false,
     }));
-  }, [gameState?.play?.trickCards, gameState?.play?.leaderIndex]);
+  }, [gameState?.play?.trickCards, gameState?.play?.leaderIndex, mapSeatToRenderSeat]);
 
   // Detect trump reveal transition
   useEffect(() => {
@@ -134,7 +185,7 @@ export const GamePage: React.FC<GamePageProps> = ({ gameId, onGameEnd }) => {
     const isHumanBidTurn =
       isBiddingPhase &&
       (legalActions.type === "BID_R1" || legalActions.type === "BID_R2") &&
-      HUMAN_SEATS.has(legalActions.seatIndex);
+      controlledSeatSet.has(legalActions.seatIndex);
 
     if (!isHumanBidTurn) {
       return;
@@ -168,7 +219,7 @@ export const GamePage: React.FC<GamePageProps> = ({ gameId, onGameEnd }) => {
       setBotBidBubble(null);
       botBidDelayTimerRef.current = null;
     }, BOT_BID_BUBBLE_DELAY_MS);
-  }, [gameState, legalActions, phase]);
+  }, [gameState, legalActions, phase, controlledSeatSet]);
 
   useEffect(() => {
     return () => {
@@ -281,7 +332,7 @@ export const GamePage: React.FC<GamePageProps> = ({ gameId, onGameEnd }) => {
     for (let i = 0; i < 4; i++) {
       if (currentBids[i] > highBid) {
         highBid = currentBids[i];
-        highBidder = PLAYER_NAMES[i];
+        highBidder = getSeatDisplayName(i);
       }
     }
 
@@ -290,7 +341,7 @@ export const GamePage: React.FC<GamePageProps> = ({ gameId, onGameEnd }) => {
       highBid = gameState.round1BidValue;
       highBidder =
         gameState.round1BidderSeat !== null
-          ? PLAYER_NAMES[gameState.round1BidderSeat]
+          ? getSeatDisplayName(gameState.round1BidderSeat)
           : null;
     }
 
@@ -298,12 +349,12 @@ export const GamePage: React.FC<GamePageProps> = ({ gameId, onGameEnd }) => {
       highBid: highBid > 0 ? highBid : null,
       highBidder,
     };
-  }, [gameState, phase]);
+  }, [gameState, phase, getSeatDisplayName]);
 
   // Determine which team is bidding
   const biddingTeam = useMemo((): "humans" | "bots" | null => {
     if (finalBidderSeat === null || finalBidderSeat === undefined) return null;
-    return HUMAN_SEATS.has(finalBidderSeat) ? "humans" : "bots";
+    return BOT_SEATS.has(finalBidderSeat) ? "bots" : "humans";
   }, [finalBidderSeat]);
 
   // Calculate tricks won (approximate based on catch number)
@@ -324,15 +375,16 @@ export const GamePage: React.FC<GamePageProps> = ({ gameId, onGameEnd }) => {
     if (!gameState) return [];
 
     return [0, 1, 2, 3].map((seatIndex) => {
-      const isBot = !HUMAN_SEATS.has(seatIndex);
-      const isHuman = HUMAN_SEATS.has(seatIndex);
-      const isHorizontal = seatIndex === 1 || seatIndex === 3;
+      const isBot = BOT_SEATS.has(seatIndex);
+      const isLocalSeat = controlledSeatSet.has(seatIndex);
+      const renderSeatIndex = mapSeatToRenderSeat(seatIndex);
+      const isHorizontal = renderSeatIndex === 1 || renderSeatIndex === 3;
       const isActive = turnIndex === seatIndex;
       const isBidder = finalBidderSeat === seatIndex;
 
       // Can interact if human, their turn, and in play phase with PLAY_CARD action
       const canInteract =
-        isHuman &&
+        isLocalSeat &&
         isActive &&
         phase === "PLAY" &&
         legalActions?.type === "PLAY_CARD";
@@ -353,6 +405,9 @@ export const GamePage: React.FC<GamePageProps> = ({ gameId, onGameEnd }) => {
 
       return {
         seatIndex,
+        renderSeatIndex,
+        displayName: getSeatDisplayName(seatIndex),
+        isBot,
         isActive,
         isBidder,
         currentBid: playerBid > 0 ? playerBid : null,
@@ -361,10 +416,10 @@ export const GamePage: React.FC<GamePageProps> = ({ gameId, onGameEnd }) => {
         handContent: (
           <PlayerHand
             cards={cards}
-            faceUp={isHuman || showBotCards}
+            faceUp={isLocalSeat}
             isHorizontal={isHorizontal}
-            isCompact={seatIndex !== 1}
-            noOverlap={isHuman}
+            isCompact={renderSeatIndex !== 1}
+            noOverlap={isLocalSeat}
             highlightedCardIds={canInteract ? legalCardIds : []}
             selectedCardId={selectedCard}
             disabled={!canInteract}
@@ -379,11 +434,13 @@ export const GamePage: React.FC<GamePageProps> = ({ gameId, onGameEnd }) => {
     finalBidderSeat,
     phase,
     legalActions,
-    showBotCards,
     legalCardIds,
     selectedCard,
     botBidBubble,
+    controlledSeatSet,
+    mapSeatToRenderSeat,
     getPlayerCards,
+    getSeatDisplayName,
     handleCardClick,
   ]);
 
@@ -451,14 +508,14 @@ export const GamePage: React.FC<GamePageProps> = ({ gameId, onGameEnd }) => {
       isBotBidDelayActive &&
       (phase === "BIDDING_R1" || phase === "BIDDING_R2") &&
       (legalActions?.type === "BID_R1" || legalActions?.type === "BID_R2") &&
-      HUMAN_SEATS.has(legalActions.seatIndex)
+      controlledSeatSet.has(legalActions.seatIndex)
     ) {
       return (
         <div className="game-panel" style={{ textAlign: "center", padding: 24 }}>
           <div className="panel-title">Waiting...</div>
           <div className="panel-subtitle">
             {botBidBubble
-              ? `${PLAYER_NAMES[botBidBubble.seatIndex]}: ${botBidBubble.text}`
+              ? `${getSeatDisplayName(botBidBubble.seatIndex)}: ${botBidBubble.text}`
               : "Bot made a call"}
           </div>
         </div>
@@ -520,7 +577,7 @@ export const GamePage: React.FC<GamePageProps> = ({ gameId, onGameEnd }) => {
       return (
         <div className="game-panel" style={{ textAlign: "center", padding: 24 }}>
           <div className="panel-title">
-            {PLAYER_NAMES[turnIndex]} is thinking...
+            {getSeatDisplayName(turnIndex)} is thinking...
           </div>
           <div className="panel-subtitle">Waiting for bid</div>
         </div>
@@ -534,7 +591,7 @@ export const GamePage: React.FC<GamePageProps> = ({ gameId, onGameEnd }) => {
       return (
         <div className="game-panel" style={{ textAlign: "center", padding: 24 }}>
           <div className="panel-title">
-            {PLAYER_NAMES[turnIndex]} is selecting trump...
+            {getSeatDisplayName(turnIndex)} is selecting trump...
           </div>
         </div>
       );
@@ -556,7 +613,11 @@ export const GamePage: React.FC<GamePageProps> = ({ gameId, onGameEnd }) => {
       return (
         <TrickArea
           cards={trickCards}
-          leadSeatIndex={gameState?.play?.leaderIndex}
+          leadSeatIndex={
+            gameState?.play?.leaderIndex !== undefined
+              ? mapSeatToRenderSeat(gameState.play.leaderIndex)
+              : undefined
+          }
         />
       );
     }
@@ -657,15 +718,10 @@ export const GamePage: React.FC<GamePageProps> = ({ gameId, onGameEnd }) => {
       {/* Debug controls */}
       <div className="debug-controls">
         <label>
-          <input
-            type="checkbox"
-            checked={showBotCards}
-            onChange={(e) => setShowBotCards(e.target.checked)}
-          />
-          Show Bot Cards
+          Room: {roomCode || "direct"} | Seats: {effectiveControlledSeats.map((s) => `P${s + 1}`).join(", ")}
         </label>
         <span style={{ marginLeft: 16 }}>
-          Phase: {phase} | Turn: {PLAYER_NAMES[turnIndex] || "N/A"}
+          Phase: {phase} | Turn: {getSeatDisplayName(turnIndex) || "N/A"}
         </span>
         {errorMessage && (
           <span style={{ marginLeft: 16, color: "#ef4444" }}>{errorMessage}</span>
@@ -678,7 +734,11 @@ export const GamePage: React.FC<GamePageProps> = ({ gameId, onGameEnd }) => {
         centerContent={renderCenterContent()}
         uiPanelInfo={
           <>
-            <PhaseIndicator phase={phase} currentPlayerSeat={turnIndex} />
+            <PhaseIndicator
+              phase={phase}
+              currentPlayerSeat={turnIndex}
+              currentPlayerName={turnIndex >= 0 ? getSeatDisplayName(turnIndex) : null}
+            />
             <TrumpIndicator
               trumpSuit={gameState.play?.trumpSuit || null}
               trumpCardId={gameState.play?.trumpCardId}
@@ -695,6 +755,7 @@ export const GamePage: React.FC<GamePageProps> = ({ gameId, onGameEnd }) => {
             biddingTeam={biddingTeam}
             humanPoints={gameState.play?.team2Points || 0}
             botPoints={gameState.play?.team1Points || 0}
+            humanTeamLabel={`${getSeatDisplayName(1)} & ${getSeatDisplayName(3)}`}
           />
         }
         overlay={

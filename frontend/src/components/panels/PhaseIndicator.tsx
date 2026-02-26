@@ -13,15 +13,18 @@ import "../../styles/panels.scss";
 export interface PhaseIndicatorProps {
   phase: string;
   currentPlayerSeat?: number;
+  currentPlayerName?: string | null;
 }
 
 export const PhaseIndicator: React.FC<PhaseIndicatorProps> = ({
   phase,
   currentPlayerSeat,
+  currentPlayerName,
 }) => {
   const phaseText = PHASE_DISPLAY_TEXT[phase] || phase;
   const playerName =
-    currentPlayerSeat !== undefined ? PLAYER_NAMES[currentPlayerSeat] : null;
+    currentPlayerName ??
+    (currentPlayerSeat !== undefined ? PLAYER_NAMES[currentPlayerSeat] : null);
 
   return (
     <div

@@ -9,6 +9,8 @@ export type Card = {
 
 export type GameState = {
   gameId: string;
+  viewerSeatIndex?: number;
+  playerNames?: string[];
   phase: string;
   startingBidderIndex: number;
   turnIndex: number;
@@ -44,6 +46,25 @@ export type GameState = {
     winnerTeam: number | null;
   };
   eventLog: string[];
+};
+
+export type RoomJoinResponse = {
+  roomCode: string;
+  gameId: string | null;
+  seatIndex: number;
+  seatName: string;
+  playerToken: string;
+  waitingForPlayer: boolean;
+  playersJoined: number;
+};
+
+export type RoomStatusResponse = {
+  roomCode: string;
+  gameId: string | null;
+  seatIndex: number | null;
+  seatName?: string | null;
+  waitingForPlayer: boolean;
+  playersJoined: number;
 };
 
 export type LegalActions =

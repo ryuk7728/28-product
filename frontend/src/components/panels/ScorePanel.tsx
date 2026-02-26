@@ -17,6 +17,7 @@ export interface ScorePanelProps {
   biddingTeam: "humans" | "bots" | null;
   humanPoints: number;
   botPoints: number;
+  humanTeamLabel?: string;
 }
 
 export const ScorePanel: React.FC<ScorePanelProps> = ({
@@ -26,6 +27,7 @@ export const ScorePanel: React.FC<ScorePanelProps> = ({
   biddingTeam,
   humanPoints,
   botPoints,
+  humanTeamLabel = "You & Partner",
 }) => {
   return (
     <div className="game-panel score-panel">
@@ -40,7 +42,7 @@ export const ScorePanel: React.FC<ScorePanelProps> = ({
         <tbody>
           <tr>
             <td className="team-name team-humans">
-              You & Partner
+              {humanTeamLabel}
               {biddingTeam === "humans" && currentBid && (
                 <span className="bid-value"> (Bid: {currentBid})</span>
               )}

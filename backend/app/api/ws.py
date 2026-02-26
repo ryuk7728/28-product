@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+from collections import defaultdict
+from typing import Awaitable, Callable
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
@@ -14,6 +16,7 @@ from app.engine.bidding_engine import (
 from app.engine.cards_adapter import from_card_id, to_card_id
 from app.engine.game_manager import game_manager
 from app.engine.legal_actions import get_legal_actions
+from app.engine.room_manager import RoomNotFoundError, RoomTokenError, room_manager
 from app.engine.play_engine import (
     init_play_state,
     apply_play_card,
@@ -31,11 +34,76 @@ TRICK_DISPLAY_DELAY_SECONDS = 3
 # Pause duration for empty table between tricks
 EMPTY_TABLE_PAUSE_SECONDS = 1
 
+_ROOM_CONNECTIONS: dict[str, list[tuple[WebSocket, int]]] = defaultdict(list)
+_ROOM_REGISTRY_LOCK = asyncio.Lock()
+
+
+async def _register_room_connection(
+    room_code: str, websocket: WebSocket, viewer_seat: int
+) -> None:
+    async with _ROOM_REGISTRY_LOCK:
+        key = room_code.upper()
+        _ROOM_CONNECTIONS[key].append((websocket, viewer_seat))
+
+
+async def _unregister_room_connection(room_code: str, websocket: WebSocket) -> None:
+    async with _ROOM_REGISTRY_LOCK:
+        key = room_code.upper()
+        conns = _ROOM_CONNECTIONS.get(key, [])
+        _ROOM_CONNECTIONS[key] = [(ws, seat) for ws, seat in conns if ws is not websocket]
+        if not _ROOM_CONNECTIONS[key]:
+            _ROOM_CONNECTIONS.pop(key, None)
+
+
+async def _room_connections_snapshot(room_code: str) -> list[tuple[WebSocket, int]]:
+    async with _ROOM_REGISTRY_LOCK:
+        return list(_ROOM_CONNECTIONS.get(room_code.upper(), []))
+
 
 async def _send_state(websocket: WebSocket, state) -> None:
+    await _send_state_for_viewer(websocket, state, viewer_seat=None)
+
+
+def _filter_actions_for_viewer(actions: dict, viewer_seat: int | None) -> dict:
+    if viewer_seat is None:
+        return actions
+
+    action_type = actions.get("type")
+    action_seat = actions.get("seatIndex")
+
+    if action_type == "MANUAL_DEAL_REST":
+        return {"type": "NO_ACTION", "seatIndex": viewer_seat}
+
+    if isinstance(action_seat, int) and action_seat != viewer_seat:
+        return {"type": "NO_ACTION", "seatIndex": viewer_seat}
+
+    return actions
+
+
+async def _send_state_for_viewer(
+    websocket: WebSocket, state, viewer_seat: int | None
+) -> None:
     actions = get_legal_actions(state)
-    await websocket.send_json({"type": "STATE_UPDATE", "state": state.to_public_dict()})
-    await websocket.send_json({"type": "LEGAL_ACTIONS", "actions": actions})
+    state_payload = (
+        state.to_public_dict()
+        if viewer_seat is None
+        else state.to_public_dict_for_viewer(viewer_seat)
+    )
+    filtered_actions = _filter_actions_for_viewer(actions, viewer_seat)
+    await websocket.send_json({"type": "STATE_UPDATE", "state": state_payload})
+    await websocket.send_json({"type": "LEGAL_ACTIONS", "actions": filtered_actions})
+
+
+async def _broadcast_room_state(room_code: str, state) -> None:
+    stale_sockets: list[WebSocket] = []
+    for ws, viewer_seat in await _room_connections_snapshot(room_code):
+        try:
+            await _send_state_for_viewer(ws, state, viewer_seat)
+        except Exception:
+            stale_sockets.append(ws)
+
+    for ws in stale_sockets:
+        await _unregister_room_connection(room_code, ws)
 
 
 def _validate_manual_rest_deal(state, rest_hands: list[list[str]]) -> None:
@@ -257,7 +325,7 @@ def _apply_select_trump_card(state, *, seat: int, card_id: str) -> None:
 
 
 async def _advance_bots_until_human_any_phase(
-    state, pool, bot_sem, websocket: WebSocket, game_id: str
+    state, pool, bot_sem, websocket: WebSocket, game_id: str, send_state_fn
 ) -> None:
     """
     Auto-advance bot seats (0,2) in:
@@ -373,31 +441,57 @@ async def _advance_bots_until_human_any_phase(
             continue
 
         if state.phase == "PLAY":
-            await advance_bots_until_human(state, pool, bot_sem, websocket, _send_state)
+            await advance_bots_until_human(
+                state, pool, bot_sem, websocket, send_state_fn
+            )
             return
 
         return
 
 
-@router.websocket("/ws/games/{game_id}")
-async def ws_game(websocket: WebSocket, game_id: str) -> None:
-    await websocket.accept()
+def _extract_authorized_seat(msg: dict, viewer_seat: int | None) -> int:
+    raw = msg.get("seatIndex")
+    if viewer_seat is None:
+        if raw is None:
+            raise ValueError("seatIndex is required.")
+        return int(raw)
+    if raw is None:
+        return viewer_seat
+    requested = int(raw)
+    if requested != viewer_seat:
+        raise ValueError("You can only act for your assigned seat.")
+    return viewer_seat
 
-    state = game_manager.get_game(game_id)
-    if not state:
-        await websocket.send_json({"type": "ERROR", "message": "Game not found"})
-        await websocket.close()
-        return
 
+async def _run_ws_session(
+    websocket: WebSocket,
+    *,
+    game_id: str,
+    state,
+    viewer_seat: int | None,
+    broadcast_state: Callable[[object], Awaitable[None]] | None = None,
+) -> None:
     app = websocket.scope["app"]
     pool = app.state.process_pool
     bot_sem = app.state.bot_sem
 
-    await _advance_bots_until_human_any_phase(state, pool, bot_sem, websocket, game_id)
+    async def send_state_current() -> None:
+        if broadcast_state is not None:
+            await broadcast_state(state)
+            return
+        await _send_state_for_viewer(websocket, state, viewer_seat)
 
-    # Check if auto-deal caused an abort condition
+    async def send_state_fn(ws: WebSocket, current_state) -> None:
+        if broadcast_state is not None:
+            await broadcast_state(current_state)
+            return
+        await _send_state_for_viewer(ws, current_state, viewer_seat)
+
+    await _advance_bots_until_human_any_phase(
+        state, pool, bot_sem, websocket, game_id, send_state_fn
+    )
+
     if state.phase == "GAME_OVER" and state.winnerTeam == -1:
-        # Find the abort reason from event log
         reason = "UNKNOWN"
         for log in reversed(state.event_log):
             if "ALL_FOUR_JACKS" in log:
@@ -409,7 +503,7 @@ async def ws_game(websocket: WebSocket, game_id: str) -> None:
         await _abort_game(websocket, game_id, reason)
         return
 
-    await _send_state(websocket, state)
+    await send_state_current()
 
     try:
         while True:
@@ -417,17 +511,17 @@ async def ws_game(websocket: WebSocket, game_id: str) -> None:
             msg_type = msg.get("type")
 
             if msg_type == "GET_STATE":
-                await _send_state(websocket, state)
+                await send_state_current()
                 continue
 
-            # -------------------
-            # BIDDING: SUBMIT_BID
-            # -------------------
             if msg_type == "SUBMIT_BID":
-                seat = int(msg.get("seatIndex"))
+                try:
+                    seat = _extract_authorized_seat(msg, viewer_seat)
+                except ValueError as e:
+                    await websocket.send_json({"type": "ERROR", "message": str(e)})
+                    continue
                 bid_value = int(msg.get("bidValue"))
 
-                # Round 1
                 if state.phase == "BIDDING_R1":
                     if seat != state.turn_index:
                         await websocket.send_json(
@@ -453,9 +547,7 @@ async def ws_game(websocket: WebSocket, game_id: str) -> None:
                         await websocket.send_json({"type": "ERROR", "message": str(e)})
                         continue
 
-                    # Rule 1: redeal request (-1)
                     if bid_value == -1:
-                        # Only step0 starter can request, and only if can_redeal
                         if state.bidding_r1_step != 0 or not rules.can_redeal:
                             await websocket.send_json(
                                 {"type": "ERROR", "message": "Redeal not allowed now."}
@@ -466,20 +558,19 @@ async def ws_game(websocket: WebSocket, game_id: str) -> None:
                         game_manager.redeal_first4_in_place(state)
 
                         await _advance_bots_until_human_any_phase(
-                            state, pool, bot_sem, websocket, game_id
+                            state, pool, bot_sem, websocket, game_id, send_state_fn
                         )
-                        await _send_state(websocket, state)
+                        await send_state_current()
                         continue
 
                     _apply_r1_bid(state, seat=seat, bid_value=bid_value)
 
                     await _advance_bots_until_human_any_phase(
-                        state, pool, bot_sem, websocket, game_id
+                        state, pool, bot_sem, websocket, game_id, send_state_fn
                     )
-                    await _send_state(websocket, state)
+                    await send_state_current()
                     continue
 
-                # Round 2
                 if state.phase == "BIDDING_R2":
                     if seat != state.turn_index:
                         await websocket.send_json(
@@ -503,9 +594,9 @@ async def ws_game(websocket: WebSocket, game_id: str) -> None:
                     _apply_r2_bid(state, seat=seat, bid_value=bid_value)
 
                     await _advance_bots_until_human_any_phase(
-                        state, pool, bot_sem, websocket, game_id
+                        state, pool, bot_sem, websocket, game_id, send_state_fn
                     )
-                    await _send_state(websocket, state)
+                    await send_state_current()
                     continue
 
                 await websocket.send_json(
@@ -513,11 +604,12 @@ async def ws_game(websocket: WebSocket, game_id: str) -> None:
                 )
                 continue
 
-            # -------------------------
-            # TRUMP: SELECT_TRUMP_CARD
-            # -------------------------
             if msg_type == "SELECT_TRUMP_CARD":
-                seat = int(msg.get("seatIndex"))
+                try:
+                    seat = _extract_authorized_seat(msg, viewer_seat)
+                except ValueError as e:
+                    await websocket.send_json({"type": "ERROR", "message": str(e)})
+                    continue
                 card_id = str(msg.get("cardId"))
 
                 try:
@@ -527,15 +619,18 @@ async def ws_game(websocket: WebSocket, game_id: str) -> None:
                     continue
 
                 await _advance_bots_until_human_any_phase(
-                    state, pool, bot_sem, websocket, game_id
+                    state, pool, bot_sem, websocket, game_id, send_state_fn
                 )
-                await _send_state(websocket, state)
+                await send_state_current()
                 continue
 
-            # -----------------------------
-            # MANUAL DEAL REST (16 cards)
-            # -----------------------------
             if msg_type == "SUBMIT_REST_DEAL":
+                if viewer_seat is not None:
+                    await websocket.send_json(
+                        {"type": "ERROR", "message": "Manual deal is not allowed here."}
+                    )
+                    continue
+
                 if state.phase != "MANUAL_DEAL_REST":
                     await websocket.send_json(
                         {"type": "ERROR", "message": "Not in MANUAL_DEAL_REST phase."}
@@ -548,21 +643,18 @@ async def ws_game(websocket: WebSocket, game_id: str) -> None:
                         raise ValueError("restHands must be a list.")
                     _validate_manual_rest_deal(state, rest_hands)
 
-                    # Apply deal
                     for seat in range(4):
                         for cid in rest_hands[seat]:
                             state.players_cards[seat].append(from_card_id(cid))
 
                     state.draw_pile.clear()
 
-                    # Rule 2/3: abort checks after full 8-card deal
                     reason = _abort_reason_after_full_deal(state)
                     if reason:
                         state.event_log.append(f"GAME ABORTED: {reason}")
                         await _abort_game(websocket, game_id, reason)
                         return
 
-                    # Start R2 bidding
                     state.phase = "BIDDING_R2"
                     state.bidding_r2_step = 0
                     state.bidding_r2_bids_by_pos = [0, 0, 0, 0]
@@ -570,19 +662,20 @@ async def ws_game(websocket: WebSocket, game_id: str) -> None:
                     state.event_log.append("Manual deal complete. Bidding Round 2 starts.")
 
                     await _advance_bots_until_human_any_phase(
-                        state, pool, bot_sem, websocket, game_id
+                        state, pool, bot_sem, websocket, game_id, send_state_fn
                     )
-                    await _send_state(websocket, state)
+                    await send_state_current()
                 except ValueError as e:
                     await websocket.send_json({"type": "ERROR", "message": str(e)})
 
                 continue
 
-            # -------------------
-            # PLAY: REVEAL CHOICE
-            # -------------------
             if msg_type == "CHOOSE_REVEAL_TRUMP":
-                seat = int(msg.get("seatIndex"))
+                try:
+                    seat = _extract_authorized_seat(msg, viewer_seat)
+                except ValueError as e:
+                    await websocket.send_json({"type": "ERROR", "message": str(e)})
+                    continue
                 reveal = bool(msg.get("reveal"))
 
                 if state.phase != "PLAY":
@@ -602,35 +695,32 @@ async def ws_game(websocket: WebSocket, game_id: str) -> None:
 
                 try:
                     apply_reveal_choice(state, seat, reveal)
+                    await send_state_current()
 
-                    # Send state immediately so reveal choice is shown
-                    await _send_state(websocket, state)
-
-                    # If revealing trump completed trick (4 cards), wait then show empty table
                     if len(state.s) == 4:
                         await asyncio.sleep(TRICK_DISPLAY_DELAY_SECONDS)
-                        # Clear the trick and send empty state for smooth transition
                         resolve_if_catch_complete(state)
-                        await _send_state(websocket, state)
+                        await send_state_current()
                         await asyncio.sleep(EMPTY_TABLE_PAUSE_SECONDS)
                     else:
                         resolve_if_catch_complete(state)
 
                     await _advance_bots_until_human_any_phase(
-                        state, pool, bot_sem, websocket, game_id
+                        state, pool, bot_sem, websocket, game_id, send_state_fn
                     )
                 except ValueError as e:
                     await websocket.send_json({"type": "ERROR", "message": str(e)})
                     continue
 
-                await _send_state(websocket, state)
+                await send_state_current()
                 continue
 
-            # ----------------
-            # PLAY: PLAY CARD
-            # ----------------
             if msg_type == "PLAY_CARD":
-                seat = int(msg.get("seatIndex"))
+                try:
+                    seat = _extract_authorized_seat(msg, viewer_seat)
+                except ValueError as e:
+                    await websocket.send_json({"type": "ERROR", "message": str(e)})
+                    continue
                 card_id = str(msg.get("cardId"))
 
                 if state.phase != "PLAY":
@@ -650,28 +740,24 @@ async def ws_game(websocket: WebSocket, game_id: str) -> None:
 
                 try:
                     apply_play_card(state, seat, card_id)
+                    await send_state_current()
 
-                    # Send state immediately so human's card appears
-                    await _send_state(websocket, state)
-
-                    # If human completed trick (4 cards), wait then show empty table
                     if len(state.s) == 4:
                         await asyncio.sleep(TRICK_DISPLAY_DELAY_SECONDS)
-                        # Clear the trick and send empty state for smooth transition
                         resolve_if_catch_complete(state)
-                        await _send_state(websocket, state)
+                        await send_state_current()
                         await asyncio.sleep(EMPTY_TABLE_PAUSE_SECONDS)
                     else:
                         resolve_if_catch_complete(state)
 
                     await _advance_bots_until_human_any_phase(
-                        state, pool, bot_sem, websocket, game_id
+                        state, pool, bot_sem, websocket, game_id, send_state_fn
                     )
                 except ValueError as e:
                     await websocket.send_json({"type": "ERROR", "message": str(e)})
                     continue
 
-                await _send_state(websocket, state)
+                await send_state_current()
                 continue
 
             await websocket.send_json(
@@ -680,3 +766,67 @@ async def ws_game(websocket: WebSocket, game_id: str) -> None:
 
     except WebSocketDisconnect:
         return
+
+
+@router.websocket("/ws/games/{game_id}")
+async def ws_game(websocket: WebSocket, game_id: str) -> None:
+    await websocket.accept()
+
+    state = game_manager.get_game(game_id)
+    if not state:
+        await websocket.send_json({"type": "ERROR", "message": "Game not found"})
+        await websocket.close()
+        return
+
+    await _run_ws_session(websocket, game_id=game_id, state=state, viewer_seat=None)
+
+
+@router.websocket("/ws/rooms/{room_code}")
+async def ws_room(websocket: WebSocket, room_code: str) -> None:
+    await websocket.accept()
+
+    player_token = websocket.query_params.get("token", "").strip()
+    if not player_token:
+        await websocket.send_json({"type": "ERROR", "message": "Missing room token."})
+        await websocket.close()
+        return
+
+    try:
+        room, viewer_seat = room_manager.validate_player(
+            room_code=room_code, player_token=player_token
+        )
+    except RoomNotFoundError:
+        await websocket.send_json({"type": "ERROR", "message": "Room not found."})
+        await websocket.close()
+        return
+    except RoomTokenError:
+        await websocket.send_json({"type": "ERROR", "message": "Invalid room token."})
+        await websocket.close()
+        return
+
+    if room.game_id is None:
+        await websocket.send_json(
+            {"type": "ERROR", "message": "Waiting for second player to join room."}
+        )
+        await websocket.close()
+        return
+
+    state = game_manager.get_game(room.game_id)
+    if not state:
+        await websocket.send_json({"type": "ERROR", "message": "Game not found."})
+        await websocket.close()
+        return
+
+    await _register_room_connection(room_code, websocket, viewer_seat)
+    try:
+        await _run_ws_session(
+            websocket,
+            game_id=room.game_id,
+            state=state,
+            viewer_seat=viewer_seat,
+            broadcast_state=lambda current_state: _broadcast_room_state(
+                room_code, current_state
+            ),
+        )
+    finally:
+        await _unregister_room_connection(room_code, websocket)
