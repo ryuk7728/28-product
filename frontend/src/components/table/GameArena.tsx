@@ -51,6 +51,8 @@ export const GameArena: React.FC<GameArenaProps> = ({
         {players.map((player) => {
           const renderSeatIndex = player.renderSeatIndex ?? player.seatIndex;
           const direction = PLAYER_DIRECTIONS[renderSeatIndex];
+          const speechBubbleDirection =
+            direction === "west" ? "left" : direction === "east" ? "right" : undefined;
 
           return (
             <div
@@ -71,9 +73,7 @@ export const GameArena: React.FC<GameArenaProps> = ({
                     currentBid={player.currentBid}
                     isThinking={player.isThinking}
                     speechBubbleText={player.speechBubbleText}
-                    speechBubbleDirection={
-                      direction === "west" ? "left" : direction === "east" ? "right" : undefined
-                    }
+                    speechBubbleDirection={speechBubbleDirection}
                   />
                 </>
               ) : direction === "north" ? (
@@ -87,9 +87,7 @@ export const GameArena: React.FC<GameArenaProps> = ({
                     currentBid={player.currentBid}
                     isThinking={player.isThinking}
                     speechBubbleText={player.speechBubbleText}
-                    speechBubbleDirection={
-                      direction === "west" ? "left" : direction === "east" ? "right" : undefined
-                    }
+                    speechBubbleDirection={speechBubbleDirection}
                   />
                   {player.handContent}
                 </>
@@ -105,9 +103,7 @@ export const GameArena: React.FC<GameArenaProps> = ({
                     currentBid={player.currentBid}
                     isThinking={player.isThinking}
                     speechBubbleText={player.speechBubbleText}
-                    speechBubbleDirection={
-                      direction === "west" ? "left" : direction === "east" ? "right" : undefined
-                    }
+                    speechBubbleDirection={speechBubbleDirection}
                   />
                   {player.handContent}
                 </>
