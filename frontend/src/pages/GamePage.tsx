@@ -52,6 +52,7 @@ export interface GamePageProps {
   playerToken?: string;
   playerSeatIndex?: number;
   controlledSeatIndices?: number[];
+  spectateMode?: boolean;
   onGameEnd?: () => void;
 }
 
@@ -61,6 +62,7 @@ export const GamePage: React.FC<GamePageProps> = ({
   playerToken,
   playerSeatIndex = 1,
   controlledSeatIndices,
+  spectateMode = false,
   onGameEnd,
 }) => {
   const [selectedCard, setSelectedCard] = useState<string | null>(null);
@@ -93,6 +95,7 @@ export const GamePage: React.FC<GamePageProps> = ({
     gameId: gameId || "",
     roomCode,
     playerToken,
+    spectateMode,
     onError: () => {},
     onGameAborted: (reason) => {
       setAbortReason(reason);
@@ -106,12 +109,14 @@ export const GamePage: React.FC<GamePageProps> = ({
   const playerNamesFromState = gameState?.playerNames ?? PLAYER_NAMES;
 
   const effectiveControlledSeats = useMemo(() => {
-    const raw = controlledSeatIndices && controlledSeatIndices.length > 0
+    const raw = spectateMode
+      ? []
+      : controlledSeatIndices && controlledSeatIndices.length > 0
       ? controlledSeatIndices
       : [1, 3];
     const dedup = Array.from(new Set(raw.map((s) => Number(s))));
     return dedup.filter((s) => s >= 0 && s <= 3);
-  }, [controlledSeatIndices]);
+  }, [controlledSeatIndices, spectateMode]);
 
   const controlledSeatSet = useMemo(
     () => new Set(effectiveControlledSeats),
@@ -516,7 +521,7 @@ export const GamePage: React.FC<GamePageProps> = ({
         handContent: (
           <PlayerHand
             cards={cards}
-            faceUp={isLocalSeat}
+            faceUp={spectateMode || isLocalSeat}
             isHorizontal={isHorizontal}
             isCompact={renderSeatIndex !== 1}
             noOverlap={isLocalSeat}
@@ -545,6 +550,7 @@ export const GamePage: React.FC<GamePageProps> = ({
     humanBidPromptSeat,
     getSeatDisplayName,
     handleCardClick,
+    spectateMode,
   ]);
 
   const renderCenterContent = () => {

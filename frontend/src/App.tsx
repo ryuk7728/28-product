@@ -13,9 +13,10 @@ export default function App() {
     <GamePage
       gameId={session.gameId}
       roomCode={session.roomCode}
-      playerToken={session.playerToken}
-      playerSeatIndex={session.seatIndex}
-      controlledSeatIndices={[session.seatIndex]}
+      playerToken={session.mode === "player" ? session.playerToken : undefined}
+      playerSeatIndex={session.mode === "player" ? session.seatIndex : undefined}
+      controlledSeatIndices={session.mode === "player" ? [session.seatIndex] : []}
+      spectateMode={session.mode === "spectator"}
       onGameEnd={() => {
         setSession(null);
       }}

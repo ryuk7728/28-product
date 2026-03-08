@@ -4,12 +4,19 @@ import { PLAYER_NAMES } from "../config/constants";
 import type { RoomJoinResponse, RoomStatusResponse } from "../api/types";
 import "../styles/multiplayer-lobby.scss";
 
-export type MultiplayerSession = {
-  roomCode: string;
-  gameId: string;
-  seatIndex: number;
-  playerToken: string;
-};
+export type MultiplayerSession =
+  | {
+      roomCode: string;
+      gameId: string;
+      mode: "player";
+      seatIndex: number;
+      playerToken: string;
+    }
+  | {
+      roomCode: string;
+      gameId: string;
+      mode: "spectator";
+    };
 
 type Props = {
   onReady: (session: MultiplayerSession) => void;
@@ -17,8 +24,9 @@ type Props = {
 
 type WaitingState = {
   roomCode: string;
-  seatIndex: number;
-  playerToken: string;
+  mode: "player" | "spectator";
+  seatIndex?: number;
+  playerToken?: string;
   playersJoined: number;
 };
 
@@ -45,7 +53,7 @@ export function MultiplayerLobbyPage({ onReady }: Props) {
     localStorage.setItem(tokenStorageKey(roomCode), playerToken);
   };
 
-  const completeIfReady = (payload: {
+  const completePlayerIfReady = (payload: {
     roomCode: string;
     gameId: string | null;
     seatIndex: number;
@@ -57,6 +65,7 @@ export function MultiplayerLobbyPage({ onReady }: Props) {
     onReady({
       roomCode: payload.roomCode,
       gameId: payload.gameId,
+      mode: "player",
       seatIndex: payload.seatIndex,
       playerToken: payload.playerToken,
     });
@@ -68,16 +77,16 @@ export function MultiplayerLobbyPage({ onReady }: Props) {
     setLoading(true);
     try {
       const res = await http.post<RoomJoinResponse>("/rooms", {
-        startingBidderIndex: 0,
         playerName: createPlayerName.trim(),
       });
       const data = res.data;
       persistToken(data.roomCode, data.playerToken);
 
-      if (completeIfReady(data)) return;
+      if (completePlayerIfReady(data)) return;
 
       setWaiting({
         roomCode: data.roomCode,
+        mode: "player",
         seatIndex: data.seatIndex,
         playerToken: data.playerToken,
         playersJoined: data.playersJoined,
@@ -111,10 +120,11 @@ export function MultiplayerLobbyPage({ onReady }: Props) {
       const data = res.data;
       persistToken(data.roomCode, data.playerToken);
 
-      if (completeIfReady(data)) return;
+      if (completePlayerIfReady(data)) return;
 
       setWaiting({
         roomCode: data.roomCode,
+        mode: "player",
         seatIndex: data.seatIndex,
         playerToken: data.playerToken,
         playersJoined: data.playersJoined,
@@ -128,13 +138,51 @@ export function MultiplayerLobbyPage({ onReady }: Props) {
     }
   }
 
+  async function spectateRoom() {
+    if (!normalizedJoinCode) {
+      setError("Enter a room code.");
+      return;
+    }
+    setError(null);
+    setLoading(true);
+    try {
+      const res = await http.get<RoomStatusResponse>(`/rooms/${normalizedJoinCode}`);
+      const status = res.data;
+
+      if (status.gameId) {
+        onReady({
+          roomCode: normalizedJoinCode,
+          gameId: status.gameId,
+          mode: "spectator",
+        });
+        return;
+      }
+
+      setWaiting({
+        roomCode: normalizedJoinCode,
+        mode: "spectator",
+        playersJoined: status.playersJoined,
+      });
+    } catch (e: unknown) {
+      const err = e as { response?: { data?: { detail?: string } }; message?: string };
+      const msg = err?.response?.data?.detail ?? err?.message ?? "Failed to spectate room";
+      setError(String(msg));
+    } finally {
+      setLoading(false);
+    }
+  }
+
   useEffect(() => {
     if (!waiting) return;
     setCopied(false);
     const interval = window.setInterval(async () => {
       try {
+        const params =
+          waiting.mode === "player" && waiting.playerToken
+            ? { playerToken: waiting.playerToken }
+            : undefined;
         const res = await http.get<RoomStatusResponse>(`/rooms/${waiting.roomCode}`, {
-          params: { playerToken: waiting.playerToken },
+          params,
         });
         const status = res.data;
         setWaiting((prev) =>
@@ -147,12 +195,21 @@ export function MultiplayerLobbyPage({ onReady }: Props) {
         );
 
         if (status.gameId) {
-          onReady({
-            roomCode: waiting.roomCode,
-            gameId: status.gameId,
-            seatIndex: waiting.seatIndex,
-            playerToken: waiting.playerToken,
-          });
+          if (waiting.mode === "player" && waiting.seatIndex !== undefined && waiting.playerToken) {
+            onReady({
+              roomCode: waiting.roomCode,
+              gameId: status.gameId,
+              mode: "player",
+              seatIndex: waiting.seatIndex,
+              playerToken: waiting.playerToken,
+            });
+          } else {
+            onReady({
+              roomCode: waiting.roomCode,
+              gameId: status.gameId,
+              mode: "spectator",
+            });
+          }
         }
       } catch {
         // Silent retry while waiting.
@@ -208,7 +265,11 @@ export function MultiplayerLobbyPage({ onReady }: Props) {
           <div className="room-panel">
             <div className="panel-eyebrow">Waiting for Players</div>
             <div className="panel-title">Room Created</div>
-            <p className="panel-sub">Share this code. Game starts when second human joins.</p>
+            <p className="panel-sub">
+              {waiting.mode === "player"
+                ? "Share this code. Game starts when second human joins."
+                : "Waiting for both players. Spectator view unlocks once the game starts."}
+            </p>
             <div className="rule" />
 
             <div className="code-label">Room Code</div>
@@ -223,15 +284,22 @@ export function MultiplayerLobbyPage({ onReady }: Props) {
             </button>
 
             <div className="info-block">
-              <div className="info-row">
-                <span className="info-key">Your Seat</span>
-                <span className="info-val">
-                  P{waiting.seatIndex + 1}{" "}
-                  <span className="tag">
-                    ({waiting.seatIndex % 2 === 0 ? PLAYER_NAMES[waiting.seatIndex] : "Human"})
+              {waiting.mode === "player" && waiting.seatIndex !== undefined ? (
+                <div className="info-row">
+                  <span className="info-key">Your Seat</span>
+                  <span className="info-val">
+                    P{waiting.seatIndex + 1}{" "}
+                    <span className="tag">
+                      ({waiting.seatIndex % 2 === 0 ? PLAYER_NAMES[waiting.seatIndex] : "Human"})
+                    </span>
                   </span>
-                </span>
-              </div>
+                </div>
+              ) : (
+                <div className="info-row">
+                  <span className="info-key">Mode</span>
+                  <span className="info-val">Spectator</span>
+                </div>
+              )}
               <div className="info-row">
                 <span className="info-key">Players Joined</span>
                 <div className="players-val">
@@ -347,6 +415,10 @@ export function MultiplayerLobbyPage({ onReady }: Props) {
 
             <button className="btn-join" onClick={() => joinRoom(false)} disabled={loading || !joinPlayerName.trim()}>
               {loading ? "Joining..." : "Join as New Player"}
+            </button>
+
+            <button className="btn-spectate" onClick={spectateRoom} disabled={loading || !normalizedJoinCode}>
+              {loading ? "Checking..." : "Spectate Room"}
             </button>
 
             {existingJoinToken && (

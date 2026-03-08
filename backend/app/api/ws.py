@@ -34,37 +34,48 @@ TRICK_DISPLAY_DELAY_SECONDS = 3
 # Pause duration for empty table between tricks
 EMPTY_TABLE_PAUSE_SECONDS = 1
 
-_ROOM_CONNECTIONS: dict[str, list[tuple[WebSocket, int]]] = defaultdict(list)
+_ROOM_CONNECTIONS: dict[str, list[tuple[WebSocket, int | None, bool]]] = defaultdict(list)
 _ROOM_REGISTRY_LOCK = asyncio.Lock()
 
 
 async def _register_room_connection(
-    room_code: str, websocket: WebSocket, viewer_seat: int
+    room_code: str, websocket: WebSocket, viewer_seat: int | None, can_act: bool
 ) -> None:
     async with _ROOM_REGISTRY_LOCK:
         key = room_code.upper()
-        _ROOM_CONNECTIONS[key].append((websocket, viewer_seat))
+        _ROOM_CONNECTIONS[key].append((websocket, viewer_seat, can_act))
 
 
 async def _unregister_room_connection(room_code: str, websocket: WebSocket) -> None:
     async with _ROOM_REGISTRY_LOCK:
         key = room_code.upper()
         conns = _ROOM_CONNECTIONS.get(key, [])
-        _ROOM_CONNECTIONS[key] = [(ws, seat) for ws, seat in conns if ws is not websocket]
+        _ROOM_CONNECTIONS[key] = [
+            (ws, seat, can_act)
+            for ws, seat, can_act in conns
+            if ws is not websocket
+        ]
         if not _ROOM_CONNECTIONS[key]:
             _ROOM_CONNECTIONS.pop(key, None)
 
 
-async def _room_connections_snapshot(room_code: str) -> list[tuple[WebSocket, int]]:
+async def _room_connections_snapshot(
+    room_code: str,
+) -> list[tuple[WebSocket, int | None, bool]]:
     async with _ROOM_REGISTRY_LOCK:
         return list(_ROOM_CONNECTIONS.get(room_code.upper(), []))
 
 
 async def _send_state(websocket: WebSocket, state) -> None:
-    await _send_state_for_viewer(websocket, state, viewer_seat=None)
+    await _send_state_for_viewer(websocket, state, viewer_seat=None, can_act=True)
 
 
-def _filter_actions_for_viewer(actions: dict, viewer_seat: int | None) -> dict:
+def _filter_actions_for_viewer(
+    actions: dict, viewer_seat: int | None, can_act: bool
+) -> dict:
+    if not can_act:
+        return {"type": "NO_ACTION"}
+
     if viewer_seat is None:
         return actions
 
@@ -81,7 +92,7 @@ def _filter_actions_for_viewer(actions: dict, viewer_seat: int | None) -> dict:
 
 
 async def _send_state_for_viewer(
-    websocket: WebSocket, state, viewer_seat: int | None
+    websocket: WebSocket, state, viewer_seat: int | None, can_act: bool
 ) -> None:
     actions = get_legal_actions(state)
     state_payload = (
@@ -89,16 +100,16 @@ async def _send_state_for_viewer(
         if viewer_seat is None
         else state.to_public_dict_for_viewer(viewer_seat)
     )
-    filtered_actions = _filter_actions_for_viewer(actions, viewer_seat)
+    filtered_actions = _filter_actions_for_viewer(actions, viewer_seat, can_act)
     await websocket.send_json({"type": "STATE_UPDATE", "state": state_payload})
     await websocket.send_json({"type": "LEGAL_ACTIONS", "actions": filtered_actions})
 
 
 async def _broadcast_room_state(room_code: str, state) -> None:
     stale_sockets: list[WebSocket] = []
-    for ws, viewer_seat in await _room_connections_snapshot(room_code):
+    for ws, viewer_seat, can_act in await _room_connections_snapshot(room_code):
         try:
-            await _send_state_for_viewer(ws, state, viewer_seat)
+            await _send_state_for_viewer(ws, state, viewer_seat, can_act)
         except Exception:
             stale_sockets.append(ws)
 
@@ -469,6 +480,7 @@ async def _run_ws_session(
     game_id: str,
     state,
     viewer_seat: int | None,
+    can_act: bool = True,
     broadcast_state: Callable[[object], Awaitable[None]] | None = None,
 ) -> None:
     app = websocket.scope["app"]
@@ -479,13 +491,13 @@ async def _run_ws_session(
         if broadcast_state is not None:
             await broadcast_state(state)
             return
-        await _send_state_for_viewer(websocket, state, viewer_seat)
+        await _send_state_for_viewer(websocket, state, viewer_seat, can_act)
 
     async def send_state_fn(ws: WebSocket, current_state) -> None:
         if broadcast_state is not None:
             await broadcast_state(current_state)
             return
-        await _send_state_for_viewer(ws, current_state, viewer_seat)
+        await _send_state_for_viewer(ws, current_state, viewer_seat, can_act)
 
     await _advance_bots_until_human_any_phase(
         state, pool, bot_sem, websocket, game_id, send_state_fn
@@ -512,6 +524,12 @@ async def _run_ws_session(
 
             if msg_type == "GET_STATE":
                 await send_state_current()
+                continue
+
+            if not can_act:
+                await websocket.send_json(
+                    {"type": "ERROR", "message": "Spectator connection is read-only."}
+                )
                 continue
 
             if msg_type == "SUBMIT_BID":
@@ -592,6 +610,7 @@ async def _run_ws_session(
                         continue
 
                     _apply_r2_bid(state, seat=seat, bid_value=bid_value)
+                    await _send_state(websocket, state)
 
                     await _advance_bots_until_human_any_phase(
                         state, pool, bot_sem, websocket, game_id, send_state_fn
@@ -785,45 +804,63 @@ async def ws_game(websocket: WebSocket, game_id: str) -> None:
 async def ws_room(websocket: WebSocket, room_code: str) -> None:
     await websocket.accept()
 
-    player_token = websocket.query_params.get("token", "").strip()
-    if not player_token:
-        await websocket.send_json({"type": "ERROR", "message": "Missing room token."})
-        await websocket.close()
-        return
+    spectator_query = websocket.query_params.get("spectator", "").strip().lower()
+    is_spectator = spectator_query in {"1", "true", "yes", "on"}
 
-    try:
-        room, viewer_seat = room_manager.validate_player(
-            room_code=room_code, player_token=player_token
-        )
-    except RoomNotFoundError:
-        await websocket.send_json({"type": "ERROR", "message": "Room not found."})
-        await websocket.close()
-        return
-    except RoomTokenError:
-        await websocket.send_json({"type": "ERROR", "message": "Invalid room token."})
-        await websocket.close()
-        return
+    viewer_seat: int | None = None
+    game_id: str | None = None
+    can_act = not is_spectator
 
-    if room.game_id is None:
+    if is_spectator:
+        try:
+            status = room_manager.get_room_status(room_code=room_code)
+        except RoomNotFoundError:
+            await websocket.send_json({"type": "ERROR", "message": "Room not found."})
+            await websocket.close()
+            return
+        game_id = status.get("gameId")
+    else:
+        player_token = websocket.query_params.get("token", "").strip()
+        if not player_token:
+            await websocket.send_json({"type": "ERROR", "message": "Missing room token."})
+            await websocket.close()
+            return
+
+        try:
+            room, viewer_seat = room_manager.validate_player(
+                room_code=room_code, player_token=player_token
+            )
+            game_id = room.game_id
+        except RoomNotFoundError:
+            await websocket.send_json({"type": "ERROR", "message": "Room not found."})
+            await websocket.close()
+            return
+        except RoomTokenError:
+            await websocket.send_json({"type": "ERROR", "message": "Invalid room token."})
+            await websocket.close()
+            return
+
+    if game_id is None:
         await websocket.send_json(
             {"type": "ERROR", "message": "Waiting for second player to join room."}
         )
         await websocket.close()
         return
 
-    state = game_manager.get_game(room.game_id)
+    state = game_manager.get_game(game_id)
     if not state:
         await websocket.send_json({"type": "ERROR", "message": "Game not found."})
         await websocket.close()
         return
 
-    await _register_room_connection(room_code, websocket, viewer_seat)
+    await _register_room_connection(room_code, websocket, viewer_seat, can_act)
     try:
         await _run_ws_session(
             websocket,
-            game_id=room.game_id,
+            game_id=game_id,
             state=state,
             viewer_seat=viewer_seat,
+            can_act=can_act,
             broadcast_state=lambda current_state: _broadcast_room_state(
                 room_code, current_state
             ),

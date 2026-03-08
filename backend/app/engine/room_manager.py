@@ -121,16 +121,14 @@ class RoomManager:
         ]
         room.game_id = state.game_id
 
-    def create_room(
-        self, *, starting_bidder_index: int, player_name: str
-    ) -> RoomAssignment:
+    def create_room(self, *, player_name: str) -> RoomAssignment:
         with self._lock:
             self._cleanup_expired_locked()
             code = self._generate_code_locked()
             room = Room(
                 code=code,
                 created_at=time.time(),
-                starting_bidder_index=starting_bidder_index,
+                starting_bidder_index=secrets.randbelow(4),
             )
             seat_index = HUMAN_ROOM_SEATS[0]
             player_token = secrets.token_urlsafe(24)

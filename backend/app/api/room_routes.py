@@ -15,7 +15,7 @@ router = APIRouter()
 
 
 class CreateRoomRequest(BaseModel):
-    startingBidderIndex: int = Field(ge=0, le=3)
+    startingBidderIndex: int | None = Field(default=None, ge=0, le=3)
     playerName: str = Field(min_length=1, max_length=24)
 
 
@@ -50,10 +50,7 @@ def _to_join_response(assignment: RoomAssignment) -> RoomJoinResponse:
 @router.post("/rooms", response_model=RoomJoinResponse)
 def create_room(req: CreateRoomRequest) -> RoomJoinResponse:
     try:
-        assignment = room_manager.create_room(
-            starting_bidder_index=req.startingBidderIndex,
-            player_name=req.playerName,
-        )
+        assignment = room_manager.create_room(player_name=req.playerName)
         return _to_join_response(assignment)
     except RoomError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e

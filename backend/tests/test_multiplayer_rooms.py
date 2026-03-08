@@ -93,3 +93,33 @@ def test_ws_room_redacts_hands_and_enforces_seat_actions() -> None:
             # Actions are scoped to the connected player (NO_ACTION or seat 1).
             if actions["type"] != "NO_ACTION":
                 assert actions.get("seatIndex") == 1
+
+
+def test_ws_room_spectator_gets_full_state_and_read_only_actions() -> None:
+    with TestClient(app) as client:
+        created = client.post(
+            "/rooms", json={"startingBidderIndex": 0, "playerName": "Alice"}
+        ).json()
+        joined = client.post(
+            "/rooms/join",
+            json={"roomCode": created["roomCode"], "playerName": "Bob"},
+        ).json()
+        assert joined["gameId"]
+
+        room_code = created["roomCode"]
+        with client.websocket_connect(f"/ws/rooms/{room_code}?spectator=1") as ws:
+            state, actions = _drain_state_and_actions(ws)
+
+            # Spectator should see all cards (no hidden placeholders).
+            assert "viewerSeatIndex" not in state
+            for player in state["players"]:
+                cards = player["cards"]
+                if cards:
+                    assert not cards[0]["cardId"].startswith("HIDDEN_")
+
+            # Spectator receives NO_ACTION and cannot submit moves.
+            assert actions["type"] == "NO_ACTION"
+            ws.send_json({"type": "SUBMIT_BID", "seatIndex": 1, "bidValue": 14})
+            err = ws.receive_json()
+            assert err["type"] == "ERROR"
+            assert "read-only" in err["message"].lower()

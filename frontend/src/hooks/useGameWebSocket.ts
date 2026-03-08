@@ -15,6 +15,7 @@ export interface UseGameWebSocketOptions {
   gameId?: string;
   roomCode?: string;
   playerToken?: string;
+  spectateMode?: boolean;
   onStateUpdate?: (state: GameState) => void;
   onLegalActions?: (actions: LegalActions) => void;
   onError?: (message: string) => void;
@@ -36,7 +37,7 @@ export interface UseGameWebSocketReturn {
 export function useGameWebSocket(
   options: UseGameWebSocketOptions
 ): UseGameWebSocketReturn {
-  const { gameId, roomCode, playerToken } = options;
+  const { gameId, roomCode, playerToken, spectateMode = false } = options;
 
   const wsRef = useRef<WebSocket | null>(null);
   const [connected, setConnected] = useState(false);
@@ -62,10 +63,14 @@ export function useGameWebSocket(
     if (wsBase && wsBase.trim() !== "") {
       const trimmed = wsBase.replace(/\/$/, "");
       if (roomCode) {
-        const tokenQuery = playerToken
-          ? `?token=${encodeURIComponent(playerToken)}`
-          : "";
-        wsUrl = `${trimmed}/ws/rooms/${encodeURIComponent(roomCode)}${tokenQuery}`;
+        if (spectateMode) {
+          wsUrl = `${trimmed}/ws/rooms/${encodeURIComponent(roomCode)}?spectator=1`;
+        } else {
+          const tokenQuery = playerToken
+            ? `?token=${encodeURIComponent(playerToken)}`
+            : "";
+          wsUrl = `${trimmed}/ws/rooms/${encodeURIComponent(roomCode)}${tokenQuery}`;
+        }
       } else {
         wsUrl = `${trimmed}/ws/games/${gameId}`;
       }
@@ -74,10 +79,14 @@ export function useGameWebSocket(
       const host = window.location.hostname;
       const port = 8000; // Backend port
       if (roomCode) {
-        const tokenQuery = playerToken
-          ? `?token=${encodeURIComponent(playerToken)}`
-          : "";
-        wsUrl = `${protocol}//${host}:${port}/ws/rooms/${encodeURIComponent(roomCode)}${tokenQuery}`;
+        if (spectateMode) {
+          wsUrl = `${protocol}//${host}:${port}/ws/rooms/${encodeURIComponent(roomCode)}?spectator=1`;
+        } else {
+          const tokenQuery = playerToken
+            ? `?token=${encodeURIComponent(playerToken)}`
+            : "";
+          wsUrl = `${protocol}//${host}:${port}/ws/rooms/${encodeURIComponent(roomCode)}${tokenQuery}`;
+        }
       } else {
         wsUrl = `${protocol}//${host}:${port}/ws/games/${gameId}`;
       }
@@ -145,7 +154,7 @@ export function useGameWebSocket(
       }
       wsRef.current = null;
     };
-  }, [gameId, roomCode, playerToken]); // Reconnect when connection identity changes
+  }, [gameId, roomCode, playerToken, spectateMode]); // Reconnect when connection identity changes
 
   // Send message helper
   const sendMessage = useCallback((msg: object) => {

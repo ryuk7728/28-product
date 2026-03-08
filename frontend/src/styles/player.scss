@@ -273,6 +273,16 @@ $bot-color: #ef4444;
   white-space: nowrap;
 }
 
+// North player: place bid chip to the right of avatar tag instead of below.
+.player-area[data-seat="3"] .player-info .player-bid {
+  position: absolute;
+  left: calc(100% + 10px);
+  top: 50%;
+  transform: translateY(-50%);
+  margin-top: 0;
+  white-space: nowrap;
+}
+
 .speech-bubble {
   position: absolute;
   top: 50%;
