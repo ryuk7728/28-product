@@ -18,7 +18,6 @@ import {
   RevealTrumpPanel,
   ScorePanel,
   TrumpIndicator,
-  TricksCounter,
   GameOverModal,
   PhaseIndicator,
   TrumpRevealOverlay,
@@ -30,6 +29,22 @@ import { PLAYER_NAMES, BOT_BID_BUBBLE_DELAY_MS } from "../config/constants";
 import "../styles/index.scss";
 
 const BOT_SEATS = new Set([0, 2]);
+const BID_SOUND_URL = new URL("../../sounds/bid.mp3", import.meta.url).href;
+const BOT_BID_EVENT_RE = /^P([1-4])\s+(bid\s+(\d+)|passed(?:\s+\(R2\))?)\.$/i;
+
+function parseBotBidEvent(logLine: string): { seatIndex: number; text: string } | null {
+  const match = logLine.match(BOT_BID_EVENT_RE);
+  if (!match) return null;
+
+  const seatIndex = Number(match[1]) - 1;
+  if (!BOT_SEATS.has(seatIndex)) return null;
+
+  const bidAmount = match[3];
+  return {
+    seatIndex,
+    text: bidAmount ? `Bid ${bidAmount}` : "Pass",
+  };
+}
 
 export interface GamePageProps {
   gameId: string;
@@ -48,10 +63,7 @@ export const GamePage: React.FC<GamePageProps> = ({
   controlledSeatIndices,
   onGameEnd,
 }) => {
-
-  // Local UI state
   const [selectedCard, setSelectedCard] = useState<string | null>(null);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [abortReason, setAbortReason] = useState<string | null>(null);
   const [botBidBubble, setBotBidBubble] = useState<{
     seatIndex: number;
@@ -60,13 +72,15 @@ export const GamePage: React.FC<GamePageProps> = ({
   const [isBotBidDelayActive, setIsBotBidDelayActive] = useState(false);
   const botBidDelayTimerRef = useRef<number | null>(null);
   const processedBotBidEventIndexRef = useRef<number>(-1);
+  const bidAudioRef = useRef<HTMLAudioElement | null>(null);
+  const wasHumanBidPanelVisibleRef = useRef(false);
+  const isHumanBidPanelVisibleRef = useRef(false);
+  const pendingBidPromptSoundRef = useRef(false);
 
-  // Trump reveal overlay state
   const [showTrumpRevealOverlay, setShowTrumpRevealOverlay] = useState(false);
   const [prevTrumpRevealed, setPrevTrumpRevealed] = useState(false);
   const [revealedTrumpInfo, setRevealedTrumpInfo] = useState<{ suit: string; cardId?: string } | null>(null);
 
-  // WebSocket connection
   const {
     connected,
     gameState,
@@ -79,16 +93,12 @@ export const GamePage: React.FC<GamePageProps> = ({
     gameId: gameId || "",
     roomCode,
     playerToken,
-    onError: (msg) => {
-      setErrorMessage(msg);
-      setTimeout(() => setErrorMessage(null), 3000);
-    },
+    onError: () => {},
     onGameAborted: (reason) => {
       setAbortReason(reason);
     },
   });
 
-  // Derived state
   const phase = gameState?.phase || "";
   const turnIndex = gameState?.turnIndex ?? -1;
   const finalBidderSeat = gameState?.finalBidderSeat;
@@ -135,10 +145,8 @@ export const GamePage: React.FC<GamePageProps> = ({
     [playerNamesFromState]
   );
 
-  // Check if this client controls the current turn seat
   const isHumanTurn = controlledSeatSet.has(turnIndex);
 
-  // Get current player's cards
   const getPlayerCards = useCallback(
     (seatIndex: number): CardType[] => {
       return gameState?.players[seatIndex]?.cards || [];
@@ -146,9 +154,6 @@ export const GamePage: React.FC<GamePageProps> = ({
     [gameState]
   );
 
-  // Build trick cards from game state
-  // Backend now handles the 5-second delay before clearing completed tricks,
-  // so we can simply use the trickCards directly from the state
   const trickCards: TrickCard[] = useMemo(() => {
     if (!gameState?.play?.trickCards) {
       return [];
@@ -162,13 +167,11 @@ export const GamePage: React.FC<GamePageProps> = ({
     }));
   }, [gameState?.play?.trickCards, gameState?.play?.leaderIndex, mapSeatToRenderSeat]);
 
-  // Detect trump reveal transition
   useEffect(() => {
     const currentTrumpRevealed = gameState?.play?.trumpReveal || false;
     const trumpSuit = gameState?.play?.trumpSuit;
     const trumpCardId = gameState?.play?.trumpCardId;
 
-    // If trump just got revealed (was hidden, now revealed)
     if (currentTrumpRevealed && !prevTrumpRevealed && trumpSuit) {
       setRevealedTrumpInfo({ suit: trumpSuit, cardId: trumpCardId || undefined });
       setShowTrumpRevealOverlay(true);
@@ -177,7 +180,6 @@ export const GamePage: React.FC<GamePageProps> = ({
     setPrevTrumpRevealed(currentTrumpRevealed);
   }, [gameState?.play?.trumpReveal, gameState?.play?.trumpSuit, gameState?.play?.trumpCardId, prevTrumpRevealed]);
 
-  // Show bot bid/pass speech bubble and delay human bidding panel for natural pacing.
   useEffect(() => {
     if (!gameState || !legalActions) return;
 
@@ -197,18 +199,11 @@ export const GamePage: React.FC<GamePageProps> = ({
       return;
     }
 
-    const lastLog = logs[lastIndex];
-    const m = lastLog.match(/^P([1-4])\s+(bid\s+(\d+)|passed(?:\s+\(R2\))?)\.$/i);
-    if (!m) return;
-
-    const seatIndex = Number(m[1]) - 1;
-    if (!BOT_SEATS.has(seatIndex)) return;
-
-    const bidAmount = m[3];
-    const bubbleText = bidAmount ? `Bid ${bidAmount}` : "Pass";
+    const parsed = parseBotBidEvent(logs[lastIndex]);
+    if (!parsed) return;
 
     processedBotBidEventIndexRef.current = lastIndex;
-    setBotBidBubble({ seatIndex, text: bubbleText });
+    setBotBidBubble({ seatIndex: parsed.seatIndex, text: parsed.text });
     setIsBotBidDelayActive(true);
 
     if (botBidDelayTimerRef.current !== null) {
@@ -229,7 +224,87 @@ export const GamePage: React.FC<GamePageProps> = ({
     };
   }, []);
 
-  // Handle bid submission
+  useEffect(() => {
+    const audio = new Audio(BID_SOUND_URL);
+    audio.preload = "auto";
+    bidAudioRef.current = audio;
+
+    return () => {
+      audio.pause();
+      audio.src = "";
+      bidAudioRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    const retryPendingBidPromptSound = () => {
+      if (!pendingBidPromptSoundRef.current) return;
+      if (!isHumanBidPanelVisibleRef.current) return;
+
+      const audio = bidAudioRef.current;
+      if (!audio) return;
+
+      try {
+        audio.currentTime = 0;
+        void audio.play().then(() => {
+          pendingBidPromptSoundRef.current = false;
+        }).catch(() => {
+          // Keep pending true; next interaction can retry.
+        });
+      } catch {
+        // Ignore runtime errors and keep pending true for next interaction.
+      }
+    };
+
+    window.addEventListener("pointerdown", retryPendingBidPromptSound, true);
+    window.addEventListener("keydown", retryPendingBidPromptSound, true);
+
+    return () => {
+      window.removeEventListener("pointerdown", retryPendingBidPromptSound, true);
+      window.removeEventListener("keydown", retryPendingBidPromptSound, true);
+    };
+  }, []);
+
+  useEffect(() => {
+    const logs = gameState?.eventLog || [];
+    const lastIndex = logs.length - 1;
+    const unprocessedBotBidEventExists =
+      lastIndex >= 0 &&
+      parseBotBidEvent(logs[lastIndex]) !== null &&
+      processedBotBidEventIndexRef.current < lastIndex;
+
+    const isHumanBidPanelVisible =
+      (phase === "BIDDING_R1" || phase === "BIDDING_R2") &&
+      (legalActions?.type === "BID_R1" || legalActions?.type === "BID_R2") &&
+      controlledSeatSet.has(legalActions.seatIndex) &&
+      !isBotBidDelayActive &&
+      !unprocessedBotBidEventExists;
+
+    isHumanBidPanelVisibleRef.current = isHumanBidPanelVisible;
+    if (!isHumanBidPanelVisible) {
+      pendingBidPromptSoundRef.current = false;
+    }
+
+    const shouldPlay =
+      isHumanBidPanelVisible && !wasHumanBidPanelVisibleRef.current;
+    wasHumanBidPanelVisibleRef.current = isHumanBidPanelVisible;
+    if (!shouldPlay) return;
+
+    const audio = bidAudioRef.current;
+    if (!audio) return;
+
+    try {
+      audio.currentTime = 0;
+      void audio.play().then(() => {
+        pendingBidPromptSoundRef.current = false;
+      }).catch(() => {
+        pendingBidPromptSoundRef.current = true;
+      });
+    } catch {
+      pendingBidPromptSoundRef.current = true;
+    }
+  }, [phase, legalActions, isBotBidDelayActive, gameState?.eventLog, controlledSeatSet]);
+
   const handleBid = useCallback(
     (value: number) => {
       if (
@@ -242,7 +317,6 @@ export const GamePage: React.FC<GamePageProps> = ({
     [isBotBidDelayActive, legalActions, sendBid]
   );
 
-  // Handle pass (bid 0)
   const handlePass = useCallback(() => {
     if (
       !isBotBidDelayActive &&
@@ -252,7 +326,6 @@ export const GamePage: React.FC<GamePageProps> = ({
     }
   }, [isBotBidDelayActive, legalActions, sendBid]);
 
-  // Handle redeal (bid -1)
   const handleRedeal = useCallback(() => {
     if (
       !isBotBidDelayActive &&
@@ -263,7 +336,6 @@ export const GamePage: React.FC<GamePageProps> = ({
     }
   }, [isBotBidDelayActive, legalActions, sendBid]);
 
-  // Handle trump card selection
   const handleTrumpSelect = useCallback(
     (cardId: string) => {
       if (
@@ -276,7 +348,6 @@ export const GamePage: React.FC<GamePageProps> = ({
     [legalActions, sendTrumpSelect]
   );
 
-  // Handle card play
   const handleCardClick = useCallback(
     (cardId: string) => {
       if (legalActions?.type === "PLAY_CARD") {
@@ -290,7 +361,6 @@ export const GamePage: React.FC<GamePageProps> = ({
     [legalActions, sendPlayCard]
   );
 
-  // Handle reveal trump choice
   const handleRevealChoice = useCallback(
     (reveal: boolean) => {
       if (
@@ -303,12 +373,10 @@ export const GamePage: React.FC<GamePageProps> = ({
     [legalActions, gameState?.play?.trickCards?.length, sendRevealChoice]
   );
 
-  // Handle new game
   const handleNewGame = useCallback(() => {
     onGameEnd?.();
   }, [onGameEnd]);
 
-  // Get legal card IDs for current player
   const legalCardIds = useMemo(() => {
     if (legalActions?.type === "PLAY_CARD") {
       return legalActions.cardIds || [];
@@ -316,18 +384,15 @@ export const GamePage: React.FC<GamePageProps> = ({
     return [];
   }, [legalActions]);
 
-  // Get current bid info for bidding panel
   const getCurrentBidInfo = useCallback(() => {
     if (!gameState) return { highBid: null, highBidder: null };
 
-    // Check R1 bids first
     const bidsR1 = gameState.bidsR1 || [0, 0, 0, 0];
     const bidsR2 = gameState.bidsR2 || [0, 0, 0, 0];
 
     let highBid = 0;
     let highBidder: string | null = null;
 
-    // Find highest bid in current round
     const currentBids = phase === "BIDDING_R2" ? bidsR2 : bidsR1;
     for (let i = 0; i < 4; i++) {
       if (currentBids[i] > highBid) {
@@ -336,7 +401,6 @@ export const GamePage: React.FC<GamePageProps> = ({
       }
     }
 
-    // For R2, also consider R1 winner
     if (phase === "BIDDING_R2" && highBid === 0 && gameState.round1BidValue) {
       highBid = gameState.round1BidValue;
       highBidder =
@@ -351,26 +415,67 @@ export const GamePage: React.FC<GamePageProps> = ({
     };
   }, [gameState, phase, getSeatDisplayName]);
 
-  // Determine which team is bidding
   const biddingTeam = useMemo((): "humans" | "bots" | null => {
     if (finalBidderSeat === null || finalBidderSeat === undefined) return null;
     return BOT_SEATS.has(finalBidderSeat) ? "bots" : "humans";
   }, [finalBidderSeat]);
 
-  // Calculate tricks won (approximate based on catch number)
-  const humanTricks = useMemo(() => {
-    if (!gameState?.play) return 0;
-    const totalCatches = (gameState.play.catchNumber || 1) - 1;
-    // This is approximate - for accurate count we'd need to track catches
-    return Math.floor(totalCatches / 2);
-  }, [gameState?.play]);
+  const humanBidPromptSeat = useMemo<number | null>(() => {
+    const isHumanBidPanelVisible =
+      (phase === "BIDDING_R1" || phase === "BIDDING_R2") &&
+      (legalActions?.type === "BID_R1" || legalActions?.type === "BID_R2") &&
+      controlledSeatSet.has(legalActions.seatIndex) &&
+      !isBotBidDelayActive;
 
-  const botTricks = useMemo(() => {
-    const totalCatches = (gameState?.play?.catchNumber || 1) - 1;
-    return totalCatches - humanTricks;
-  }, [gameState?.play?.catchNumber, humanTricks]);
+    return isHumanBidPanelVisible ? legalActions.seatIndex : null;
+  }, [phase, legalActions, controlledSeatSet, isBotBidDelayActive]);
 
-  // Build player data for GameArena
+  const displayedBidInfo = useMemo<{ seat: number | null; value: number | null }>(() => {
+    if (!gameState) {
+      return { seat: null, value: null };
+    }
+
+    if (finalBidderSeat !== null && finalBidderSeat !== undefined && (finalBidValue ?? 0) > 0) {
+      return { seat: finalBidderSeat, value: finalBidValue ?? null };
+    }
+
+    if (phase === "BIDDING_R2") {
+      let highSeat: number | null = null;
+      let highValue = 0;
+      for (let i = 0; i < 4; i++) {
+        const bid = gameState.bidsR2[i] || 0;
+        if (bid > highValue) {
+          highValue = bid;
+          highSeat = i;
+        }
+      }
+      if (highValue > 0 && highSeat !== null) {
+        return { seat: highSeat, value: highValue };
+      }
+      if ((gameState.round1BidValue ?? 0) > 0 && gameState.round1BidderSeat !== null) {
+        return { seat: gameState.round1BidderSeat, value: gameState.round1BidValue };
+      }
+      return { seat: null, value: null };
+    }
+
+    if (phase === "BIDDING_R1") {
+      let highSeat: number | null = null;
+      let highValue = 0;
+      for (let i = 0; i < 4; i++) {
+        const bid = gameState.bidsR1[i] || 0;
+        if (bid > highValue) {
+          highValue = bid;
+          highSeat = i;
+        }
+      }
+      if (highValue > 0 && highSeat !== null) {
+        return { seat: highSeat, value: highValue };
+      }
+    }
+
+    return { seat: null, value: null };
+  }, [gameState, finalBidderSeat, finalBidValue, phase]);
+
   const players = useMemo(() => {
     if (!gameState) return [];
 
@@ -382,21 +487,15 @@ export const GamePage: React.FC<GamePageProps> = ({
       const isActive = turnIndex === seatIndex;
       const isBidder = finalBidderSeat === seatIndex;
 
-      // Can interact if human, their turn, and in play phase with PLAY_CARD action
       const canInteract =
         isLocalSeat &&
         isActive &&
         phase === "PLAY" &&
         legalActions?.type === "PLAY_CARD";
 
-      // Get cards for this player
       const cards = getPlayerCards(seatIndex);
-
-      // Get current bid for this player
-      const playerBid =
-        phase === "BIDDING_R2"
-          ? gameState.bidsR2[seatIndex]
-          : gameState.bidsR1[seatIndex];
+      const playerBid = displayedBidInfo.seat === seatIndex ? displayedBidInfo.value : null;
+      const isBidGlow = humanBidPromptSeat === seatIndex && isLocalSeat;
 
       const speechBubbleText =
         botBidBubble && botBidBubble.seatIndex === seatIndex
@@ -409,8 +508,9 @@ export const GamePage: React.FC<GamePageProps> = ({
         displayName: getSeatDisplayName(seatIndex),
         isBot,
         isActive,
+        isBidGlow,
         isBidder,
-        currentBid: playerBid > 0 ? playerBid : null,
+        currentBid: playerBid !== null && playerBid > 0 ? playerBid : null,
         isThinking: isBot && isActive,
         speechBubbleText,
         handContent: (
@@ -424,6 +524,7 @@ export const GamePage: React.FC<GamePageProps> = ({
             selectedCardId={selectedCard}
             disabled={!canInteract}
             onCardClick={canInteract ? handleCardClick : undefined}
+            className={isBidGlow ? "bid-turn-glow-hand" : ""}
           />
         ),
       };
@@ -440,13 +541,13 @@ export const GamePage: React.FC<GamePageProps> = ({
     controlledSeatSet,
     mapSeatToRenderSeat,
     getPlayerCards,
+    displayedBidInfo,
+    humanBidPromptSeat,
     getSeatDisplayName,
     handleCardClick,
   ]);
 
-  // Render center content based on phase
   const renderCenterContent = () => {
-    // Handle reveal choice - this takes priority during PLAY phase
     if (
       legalActions?.type === "REVEAL_CHOICE" &&
       isHumanTurn &&
@@ -456,7 +557,6 @@ export const GamePage: React.FC<GamePageProps> = ({
       const canKeepHidden = legalActions.options?.includes(false);
       const isBidder = legalActions.seatIndex === finalBidderSeat;
 
-      // If only True is available - this is the last trick case where bidder must reveal
       if (canReveal && !canKeepHidden) {
         return (
           <div className="game-panel reveal-panel">
@@ -476,17 +576,13 @@ export const GamePage: React.FC<GamePageProps> = ({
         );
       }
 
-      // Both options available - player can choose
-      // Determine the message based on who is asking
       let message = "You can't follow suit. Reveal trump?";
 
       if (isBidder) {
-        // Bidder can reveal to play the trump card, or play a different suit
         message =
           "You can't follow suit. Reveal your trump card to play it, or play another card.";
       }
 
-      // Build played cards info for the panel
       const playedCards: PlayedCardInfo[] = trickCards.map((tc) => ({
         cardId: tc.cardId,
         seatIndex: tc.seatIndex,
@@ -503,7 +599,6 @@ export const GamePage: React.FC<GamePageProps> = ({
       );
     }
 
-    // Bidding delay: keep natural pacing after bot call/pass before enabling human input.
     if (
       isBotBidDelayActive &&
       (phase === "BIDDING_R1" || phase === "BIDDING_R2") &&
@@ -522,7 +617,6 @@ export const GamePage: React.FC<GamePageProps> = ({
       );
     }
 
-    // Bidding phases
     if (phase === "BIDDING_R1" && legalActions?.type === "BID_R1" && isHumanTurn) {
       const { highBid, highBidder } = getCurrentBidInfo();
       return (
@@ -558,7 +652,6 @@ export const GamePage: React.FC<GamePageProps> = ({
       );
     }
 
-    // Trump selection phases
     if (
       (phase === "TRUMP_SELECT_R1" || phase === "TRUMP_SELECT_R2") &&
       (legalActions?.type === "SELECT_TRUMP_R1" ||
@@ -569,7 +662,6 @@ export const GamePage: React.FC<GamePageProps> = ({
       return <TrumpSelectPanel cards={cards} onSelect={handleTrumpSelect} />;
     }
 
-    // Waiting states
     if (
       (phase === "BIDDING_R1" || phase === "BIDDING_R2") &&
       !isHumanTurn
@@ -597,7 +689,6 @@ export const GamePage: React.FC<GamePageProps> = ({
       );
     }
 
-    // Manual deal phase (auto-deal mode handles this automatically)
     if (phase === "MANUAL_DEAL_REST") {
       return (
         <div className="game-panel" style={{ textAlign: "center", padding: 24 }}>
@@ -607,8 +698,6 @@ export const GamePage: React.FC<GamePageProps> = ({
       );
     }
 
-    // Play phase - show trick area
-    // Backend handles the 5-second delay, so we use trickCards directly
     if (phase === "PLAY") {
       return (
         <TrickArea
@@ -622,21 +711,19 @@ export const GamePage: React.FC<GamePageProps> = ({
       );
     }
 
-    // Default empty state
     return null;
   };
 
-  // Render game over modal
   const renderGameOver = () => {
     if (phase !== "GAME_OVER" || !gameState?.play) return null;
 
     const winnerTeam = gameState.play.winnerTeam;
-    const didWin = winnerTeam === 2; // Team 2 is humans
+    const didWin = winnerTeam === 2;
 
     return (
       <GameOverModal
         didWin={didWin}
-        humanScore={0} // Would need cumulative tracking
+        humanScore={0}
         botScore={0}
         humanPoints={gameState.play.team2Points}
         botPoints={gameState.play.team1Points}
@@ -647,7 +734,6 @@ export const GamePage: React.FC<GamePageProps> = ({
     );
   };
 
-  // Render abort modal
   const renderAbortModal = () => {
     if (!abortReason) return null;
 
@@ -675,7 +761,6 @@ export const GamePage: React.FC<GamePageProps> = ({
     );
   };
 
-  // Loading state
   if (!gameId) {
     return (
       <div
@@ -715,20 +800,6 @@ export const GamePage: React.FC<GamePageProps> = ({
 
   return (
     <div>
-      {/* Debug controls */}
-      <div className="debug-controls">
-        <label>
-          Room: {roomCode || "direct"} | Seats: {effectiveControlledSeats.map((s) => `P${s + 1}`).join(", ")}
-        </label>
-        <span style={{ marginLeft: 16 }}>
-          Phase: {phase} | Turn: {getSeatDisplayName(turnIndex) || "N/A"}
-        </span>
-        {errorMessage && (
-          <span style={{ marginLeft: 16, color: "#ef4444" }}>{errorMessage}</span>
-        )}
-      </div>
-
-      {/* Game Arena */}
       <GameArena
         players={players}
         centerContent={renderCenterContent()}
@@ -744,7 +815,6 @@ export const GamePage: React.FC<GamePageProps> = ({
               trumpCardId={gameState.play?.trumpCardId}
               isRevealed={gameState.play?.trumpReveal || false}
             />
-            <TricksCounter humanTricks={humanTricks} botTricks={botTricks} />
           </>
         }
         uiPanelScore={

@@ -20,6 +20,7 @@ export interface PlayerData {
   displayName?: string;
   isBot?: boolean;
   isActive: boolean;
+  isBidGlow?: boolean;
   isBidder: boolean;
   currentBid: number | null;
   isThinking: boolean;
@@ -69,6 +70,7 @@ export const GameArena: React.FC<GameArenaProps> = ({
                     displayName={player.displayName}
                     isBot={player.isBot}
                     isActive={player.isActive}
+                    isBidGlow={player.isBidGlow}
                     isBidder={player.isBidder}
                     currentBid={player.currentBid}
                     isThinking={player.isThinking}
@@ -83,6 +85,7 @@ export const GameArena: React.FC<GameArenaProps> = ({
                     displayName={player.displayName}
                     isBot={player.isBot}
                     isActive={player.isActive}
+                    isBidGlow={player.isBidGlow}
                     isBidder={player.isBidder}
                     currentBid={player.currentBid}
                     isThinking={player.isThinking}
@@ -99,6 +102,7 @@ export const GameArena: React.FC<GameArenaProps> = ({
                     displayName={player.displayName}
                     isBot={player.isBot}
                     isActive={player.isActive}
+                    isBidGlow={player.isBidGlow}
                     isBidder={player.isBidder}
                     currentBid={player.currentBid}
                     isThinking={player.isThinking}

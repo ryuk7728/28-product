@@ -18,6 +18,7 @@ export interface PlayerAvatarProps {
   displayName?: string;
   isBot?: boolean;
   isActive?: boolean;
+  isBidGlow?: boolean;
   isBidder?: boolean;
   currentBid?: number | null;
   isThinking?: boolean;
@@ -30,6 +31,7 @@ export const PlayerAvatar: React.FC<PlayerAvatarProps> = ({
   displayName,
   isBot,
   isActive = false,
+  isBidGlow = false,
   isBidder = false,
   currentBid,
   isThinking = false,
@@ -41,7 +43,7 @@ export const PlayerAvatar: React.FC<PlayerAvatarProps> = ({
   const initial = name.charAt(0).toUpperCase();
 
   return (
-    <div className="player-info">
+    <div className={`player-info ${isBidGlow ? "bid-turn-glow" : ""}`}>
       {speechBubbleText && speechBubbleDirection && (
         <div className={`speech-bubble ${speechBubbleDirection}`}>
           {speechBubbleText}
