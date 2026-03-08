@@ -31,6 +31,7 @@ export interface PlayerHandProps {
   disabled?: boolean;
   onCardClick?: (cardId: string) => void;
   dealAnimation?: boolean;
+  className?: string;
 }
 
 export const PlayerHand: React.FC<PlayerHandProps> = ({
@@ -44,6 +45,7 @@ export const PlayerHand: React.FC<PlayerHandProps> = ({
   disabled = false,
   onCardClick,
   dealAnimation = false,
+  className = "",
 }) => {
   // Card dimensions based on compact mode
   const cardWidth = isCompact ? CARD_WIDTH_SMALL : CARD_WIDTH;
@@ -87,7 +89,7 @@ export const PlayerHand: React.FC<PlayerHandProps> = ({
 
   return (
     <div
-      className={`hand-container ${isHorizontal ? "horizontal" : "vertical"}`}
+      className={`hand-container ${isHorizontal ? "horizontal" : "vertical"} ${className}`.trim()}
       style={{
         width: containerWidth,
         height: containerHeight,

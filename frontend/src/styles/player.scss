@@ -203,6 +203,74 @@ $bot-color: #ef4444;
   flex-direction: column;
   align-items: center;
   gap: 4px;
+  transform: translate(var(--icon-shift-x, 0px), var(--icon-shift-y, 0px));
+}
+
+@keyframes bidTagGlowPulse {
+  0%,
+  100% {
+    opacity: 0.75;
+    transform: scale(1);
+    box-shadow:
+      0 0 10px rgba(56, 189, 248, 0.35),
+      0 0 22px rgba(56, 189, 248, 0.2);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.03);
+    box-shadow:
+      0 0 16px rgba(56, 189, 248, 0.6),
+      0 0 34px rgba(56, 189, 248, 0.35);
+  }
+}
+
+@keyframes bidHandGlowPulse {
+  0%,
+  100% {
+    filter: drop-shadow(0 0 8px rgba(56, 189, 248, 0.35))
+      drop-shadow(0 0 18px rgba(56, 189, 248, 0.2));
+  }
+  50% {
+    filter: drop-shadow(0 0 13px rgba(56, 189, 248, 0.6))
+      drop-shadow(0 0 28px rgba(56, 189, 248, 0.32));
+  }
+}
+
+// Soft bid turn glow around the player tag only.
+.player-info.bid-turn-glow .player-tag {
+  position: relative;
+}
+
+.player-info.bid-turn-glow .player-tag::after {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border-radius: inherit;
+  border: 2px solid rgba(56, 189, 248, 0.65);
+  pointer-events: none;
+  animation: bidTagGlowPulse 1.35s ease-in-out infinite;
+}
+
+// Soft bid turn glow around cards container.
+.hand-container.bid-turn-glow-hand {
+  animation: bidHandGlowPulse 1.35s ease-in-out infinite;
+}
+
+// Icon-only position controls per seat (does NOT move hand cards)
+// Seat map: 0=T-1000 (east), 1=You (south), 2=Skynet (west), 3=Partner (north)
+.player-area[data-seat="0"] { --icon-shift-x: 0px; --icon-shift-y: 0px; }
+.player-area[data-seat="1"] { --icon-shift-x: 0px; --icon-shift-y: 10px; }
+.player-area[data-seat="2"] { --icon-shift-x: 0px; --icon-shift-y: -10px; }
+.player-area[data-seat="3"] { --icon-shift-x: 0px; --icon-shift-y: -10px; }
+
+// South player ("You"): place bid chip to the right of avatar tag instead of below.
+.player-area[data-seat="1"] .player-info .player-bid {
+  position: absolute;
+  left: calc(100% + 10px);
+  top: 50%;
+  transform: translateY(-50%);
+  margin-top: 0;
+  white-space: nowrap;
 }
 
 .speech-bubble {

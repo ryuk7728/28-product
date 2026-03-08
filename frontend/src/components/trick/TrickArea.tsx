@@ -38,10 +38,52 @@ export const TrickArea: React.FC<TrickAreaProps> = ({
   cards,
   leadSeatIndex,
 }) => {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+
   // Track previous card count to detect 4 → 0 transition
   const prevCardCountRef = useRef(cards.length);
   const [fadingOut, setFadingOut] = useState(false);
   const [displayCards, setDisplayCards] = useState<TrickCard[]>(cards);
+  const [cardSize, setCardSize] = useState({
+    width: CARD_WIDTH_SMALL,
+    height: CARD_HEIGHT_SMALL,
+  });
+
+  // Make trick cards adapt to the available center zone.
+  useEffect(() => {
+    const node = containerRef.current;
+    if (!node) return;
+
+    const CARD_RATIO = CARD_HEIGHT_SMALL / CARD_WIDTH_SMALL;
+    const MIN_WIDTH = 46;
+    const MAX_WIDTH = CARD_WIDTH_SMALL;
+
+    const update = (width: number, height: number) => {
+      const widthByZone = Math.floor(width * 0.26);
+      const widthByHeight = Math.floor((height * 0.48) / CARD_RATIO);
+      const nextWidth = Math.max(
+        MIN_WIDTH,
+        Math.min(MAX_WIDTH, widthByZone, widthByHeight)
+      );
+      const nextHeight = Math.round(nextWidth * CARD_RATIO);
+      setCardSize((prev) =>
+        prev.width === nextWidth && prev.height === nextHeight
+          ? prev
+          : { width: nextWidth, height: nextHeight }
+      );
+    };
+
+    update(node.clientWidth, node.clientHeight);
+
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (!entry) return;
+      update(entry.contentRect.width, entry.contentRect.height);
+    });
+    observer.observe(node);
+
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     const prevCount = prevCardCountRef.current;
@@ -90,8 +132,8 @@ export const TrickArea: React.FC<TrickAreaProps> = ({
         <Card
           cardId={trickCard.cardId}
           faceUp={true}
-          width={CARD_WIDTH_SMALL}
-          height={CARD_HEIGHT_SMALL}
+          width={cardSize.width}
+          height={cardSize.height}
         />
         {trickCard.isWinning && <div className="winner-badge">★</div>}
       </div>
@@ -99,16 +141,12 @@ export const TrickArea: React.FC<TrickAreaProps> = ({
   };
 
   return (
-    <div className={`trick-container ${fadingOut ? "fade-out" : ""}`}>
+    <div
+      ref={containerRef}
+      className={`trick-container ${fadingOut ? "fade-out" : ""}`}
+    >
       {/* Render cards for all 4 positions */}
       {[0, 1, 2, 3].map((seatIndex) => renderTrickCard(seatIndex))}
-
-      {/* Empty state when no cards played and not fading out */}
-      {displayCards.length === 0 && !fadingOut && (
-        <div className="trick-empty">
-          <span>Play a card</span>
-        </div>
-      )}
     </div>
   );
 };
