@@ -71,6 +71,13 @@ class Settings:
     max_concurrent_bot_thinking: int = _get_int(
         "APP_MAX_CONCURRENT_BOT_THINKING", 1
     )
+    # Max wall-clock budget per bot decision. 0 disables timeout behavior.
+    bot_think_timeout_seconds: float = _get_float(
+        "APP_BOT_THINK_TIMEOUT_SECONDS", 0.0
+    )
+    # Micro-batch size for rollouts when timeout mode is enabled.
+    # 0 means auto-size.
+    rollout_micro_batch_size: int = _get_int("APP_ROLLOUT_MICRO_BATCH_SIZE", 0)
 
     # Rollout backend (local or ray)
     rollout_backend: str = _get_str("APP_ROLLOUT_BACKEND", "local").strip().lower()

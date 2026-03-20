@@ -6,16 +6,7 @@ from typing import Any, List, Tuple, Union
 CanonicalKey = Union[str, List[List[str]]]
 
 POINT_CARDS = {"J", "9", "A", "10"}
-RANK_POINTS = {
-    "J": 3,
-    "9": 2,
-    "A": 1,
-    "10": 1,
-    "K": 0,
-    "Q": 0,
-    "8": 0,
-    "7": 0,
-}
+
 
 
 def _parse_canonical_key(canonical_key: Any) -> List[List[str]]:
@@ -106,8 +97,7 @@ def _predict_bid(groups: List[List[str]]) -> int:
     first = groups[0]
     bid = _base_bid_from_first_group(first)
 
-    first_group_points = sum(RANK_POINTS.get(rank, 0) for rank in first)
-    if len(first) >= 2 and first_group_points >= 2:
+    if len(first) >= 2:
         extra_jacks = sum(1 for g in groups[1:] for r in g if r == "J")
         bid += extra_jacks
 

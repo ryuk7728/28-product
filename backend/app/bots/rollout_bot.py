@@ -682,6 +682,37 @@ def _build_snapshot(state, bot_seat: int) -> dict[str, Any]:
     return snap
 
 
+def _build_rollout_batch_sizes(
+    *,
+    total_rollouts: int,
+    worker_count: int,
+    timeout_enabled: bool,
+    micro_batch_size: int,
+) -> list[int]:
+    if total_rollouts <= 0:
+        return []
+
+    if timeout_enabled:
+        if micro_batch_size > 0:
+            batch_size = micro_batch_size
+        else:
+            # Auto-size for reliable partial completions under timeout mode.
+            # Creates many small chunks by default.
+            batch_size = max(1, min(25, total_rollouts // max(1, worker_count * 8)))
+
+        batches: list[int] = []
+        remaining = total_rollouts
+        while remaining > 0:
+            n = min(batch_size, remaining)
+            batches.append(n)
+            remaining -= n
+        return batches
+
+    base = total_rollouts // worker_count
+    rem = total_rollouts % worker_count
+    return [base + (1 if i < rem else 0) for i in range(worker_count)]
+
+
 async def choose_action_with_rollouts_parallel(
     state,
     bot_seat: int,
@@ -701,37 +732,137 @@ async def choose_action_with_rollouts_parallel(
 
     total_rollouts = max(1, int(settings.rollouts))
     worker_count = max(1, min(int(settings.workers), total_rollouts))
+    timeout_seconds = max(0.0, float(settings.bot_think_timeout_seconds))
+    timeout_enabled = timeout_seconds > 0.0
 
     snapshot = _build_snapshot(state, bot_seat)
 
-    # Split rollouts across workers
-    base = total_rollouts // worker_count
-    rem = total_rollouts % worker_count
+    batch_sizes = _build_rollout_batch_sizes(
+        total_rollouts=total_rollouts,
+        worker_count=worker_count,
+        timeout_enabled=timeout_enabled,
+        micro_batch_size=max(0, int(settings.rollout_micro_batch_size)),
+    )
 
     use_ray = settings.rollout_backend == "ray"
+    completed_rollouts = 0
 
     try:
         if use_ray:
             ray, remote_fn = _get_ray_rollout_remote()
-            refs = []
-            for i in range(worker_count):
-                n = base + (1 if i < rem else 0)
-                seed = _seed_entropy()
-                refs.append(remote_fn.remote(snapshot, n, seed))
+            if not timeout_enabled:
+                refs = []
+                for n in batch_sizes:
+                    seed = _seed_entropy()
+                    refs.append(remote_fn.remote(snapshot, n, seed))
+                results = await asyncio.to_thread(ray.get, refs)
+                completed_rollouts = sum(batch_sizes)
+            else:
+                results = []
+                deadline = time.monotonic() + timeout_seconds
 
-            results = await asyncio.to_thread(ray.get, refs)
+                next_batch_idx = 0
+                in_flight: dict[Any, int] = {}
+
+                def _submit_one() -> bool:
+                    nonlocal next_batch_idx
+                    if next_batch_idx >= len(batch_sizes):
+                        return False
+                    n = batch_sizes[next_batch_idx]
+                    next_batch_idx += 1
+                    seed = _seed_entropy()
+                    ref = remote_fn.remote(snapshot, n, seed)
+                    in_flight[ref] = n
+                    return True
+
+                for _ in range(min(worker_count, len(batch_sizes))):
+                    if not _submit_one():
+                        break
+
+                while in_flight:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        break
+
+                    ready_refs, _ = await asyncio.to_thread(
+                        ray.wait,
+                        list(in_flight.keys()),
+                        1,
+                        remaining,
+                    )
+                    if not ready_refs:
+                        break
+
+                    for ref in ready_refs:
+                        n = in_flight.pop(ref, 0)
+                        res = await asyncio.to_thread(ray.get, ref)
+                        results.append(res)
+                        completed_rollouts += n
+                        _submit_one()
+
+                for ref in list(in_flight.keys()):
+                    try:
+                        await asyncio.to_thread(ray.cancel, ref, False)
+                    except Exception:
+                        pass
         else:
             loop = asyncio.get_running_loop()
-            tasks = []
+            if not timeout_enabled:
+                tasks = []
+                for n in batch_sizes:
+                    seed = _seed_entropy()
+                    fut = pool.submit(rollout_worker, snapshot, n, seed)
+                    tasks.append(asyncio.wrap_future(fut, loop=loop))
+                results = await asyncio.gather(*tasks)
+                completed_rollouts = sum(batch_sizes)
+            else:
+                results = []
+                deadline = time.monotonic() + timeout_seconds
 
-            for i in range(worker_count):
-                n = base + (1 if i < rem else 0)
-                seed = _seed_entropy()
+                next_batch_idx = 0
+                in_flight: dict[asyncio.Future, tuple[Any, int]] = {}
 
-                fut = pool.submit(rollout_worker, snapshot, n, seed)
-                tasks.append(asyncio.wrap_future(fut, loop=loop))
+                def _submit_one() -> bool:
+                    nonlocal next_batch_idx
+                    if next_batch_idx >= len(batch_sizes):
+                        return False
+                    n = batch_sizes[next_batch_idx]
+                    next_batch_idx += 1
+                    seed = _seed_entropy()
+                    cfut = pool.submit(rollout_worker, snapshot, n, seed)
+                    afut = asyncio.wrap_future(cfut, loop=loop)
+                    in_flight[afut] = (cfut, n)
+                    return True
 
-            results = await asyncio.gather(*tasks)
+                for _ in range(min(worker_count, len(batch_sizes))):
+                    if not _submit_one():
+                        break
+
+                while in_flight:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        break
+
+                    done, _ = await asyncio.wait(
+                        set(in_flight.keys()),
+                        timeout=remaining,
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    if not done:
+                        break
+
+                    for afut in done:
+                        _cfut, n = in_flight.pop(afut)
+                        res = afut.result()
+                        results.append(res)
+                        completed_rollouts += n
+                        _submit_one()
+
+                for _afut, (cfut, _n) in list(in_flight.items()):
+                    try:
+                        cfut.cancel()
+                    except Exception:
+                        pass
     except Exception as e:
         msg = str(e)
         if "ROLL_OUT_CRASH_DUMP=" in msg:
@@ -748,7 +879,19 @@ async def choose_action_with_rollouts_parallel(
             return ("REVEAL", {"seatIndex": bot_seat, "reveal": False})
         return ("PLAY", {"seatIndex": bot_seat, "cardId": legal.cardIds[0]})
 
-    _record_rollouts(total_rollouts)
+    if timeout_enabled and completed_rollouts < total_rollouts:
+        timeout_msg = (
+            f"Bot think timeout hit: used {completed_rollouts}/{total_rollouts} rollouts "
+            f"in {timeout_seconds:.2f}s."
+        )
+        print(timeout_msg)
+        try:
+            state.event_log.append(timeout_msg)
+        except Exception:
+            pass
+
+    if completed_rollouts > 0:
+        _record_rollouts(completed_rollouts)
 
     merged: Counter = Counter()
     for d in results:
