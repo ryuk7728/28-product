@@ -7,3 +7,4 @@ __pycache__/
 backend/rollout_crash_dumps
 meta/
 DEPLOY_PROFILE_1.md
+backend/rust_ext/target

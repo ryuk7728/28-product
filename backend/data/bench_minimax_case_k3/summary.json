@@ -1,0 +1,24 @@
+{
+  "module": "app.scripts.minimax_benchmark_case",
+  "python": {
+    "requested_backend": "python",
+    "active_backend": "python",
+    "return_code": 0,
+    "elapsed_seconds": 0.21689390001120046
+  },
+  "rust": {
+    "requested_backend": "rust",
+    "active_backend": "rust",
+    "return_code": 0,
+    "elapsed_seconds": 0.16258350003045052
+  },
+  "move_comparison": {
+    "length_match": true,
+    "python_move_count": 2,
+    "rust_move_count": 2,
+    "first_action_mismatch": null,
+    "all_actions_match": true
+  },
+  "speedup_python_over_rust": 1.3340461976189346,
+  "artifacts_dir": "backend\\data\\bench_minimax_case_k3"
+}

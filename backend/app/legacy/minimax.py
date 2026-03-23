@@ -5,6 +5,26 @@ import numpy as np
 import pickle
 import math
 import time
+import json
+import os
+
+try:
+    import rl428_minimax_rust as _rl428_minimax_rust
+    _RUST_MINIMAX_AVAILABLE = True
+except Exception:
+    _rl428_minimax_rust = None
+    _RUST_MINIMAX_AVAILABLE = False
+
+_MINIMAX_BACKEND_REQUESTED = (
+    os.getenv("APP_MINIMAX_BACKEND")
+    or os.getenv("RL428_MINIMAX_BACKEND", "auto")
+).strip().lower()
+if _MINIMAX_BACKEND_REQUESTED in ("python", "py"):
+    _MINIMAX_BACKEND_ACTIVE = "python"
+elif _MINIMAX_BACKEND_REQUESTED == "rust":
+    _MINIMAX_BACKEND_ACTIVE = "rust" if _RUST_MINIMAX_AVAILABLE else "rust_unavailable"
+else:
+    _MINIMAX_BACKEND_ACTIVE = "rust" if _RUST_MINIMAX_AVAILABLE else "python"
 
 #Checks if all the cards is from the suit specified
 def allTrump(cards,suit):
@@ -654,7 +674,7 @@ def minimax_alpha(s,first,trumpPlayed,currentCatch,trumpIndice,playerChance,play
     return value
 
 # leaf_count = [1]
-def minimax_extended(s,first,secondary,trumpPlayed,currentCatch,trumpIndice,playerChance,players,currentSuit,trumpReveal,trumpSuit,chose,finalBid,playerTrump,reveal,reward_distribution,total,num,k,alpha=-math.inf,beta=math.inf):
+def _minimax_extended_python(s,first,secondary,trumpPlayed,currentCatch,trumpIndice,playerChance,players,currentSuit,trumpReveal,trumpSuit,chose,finalBid,playerTrump,reveal,reward_distribution,total,num,k,alpha=-math.inf,beta=math.inf):
     if secondary:
         s = copy.deepcopy(s)
         trumpIndice = copy.deepcopy(trumpIndice)
@@ -668,7 +688,7 @@ def minimax_extended(s,first,secondary,trumpPlayed,currentCatch,trumpIndice,play
          currentSuit,s,trumpPlayed,trumpIndice,chose = reset(currentSuit,s,trumpPlayed,trumpIndice,chose)
          playerChance = chk[0]
          if num<k:
-            return minimax_extended(s,False,True,trumpPlayed,currentCatch,trumpIndice,playerChance,players,currentSuit,trumpReveal,trumpSuit,chose,finalBid,playerTrump,reveal,reward_distribution,total,num,k,alpha,beta)
+            return _minimax_extended_python(s,False,True,trumpPlayed,currentCatch,trumpIndice,playerChance,players,currentSuit,trumpReveal,trumpSuit,chose,finalBid,playerTrump,reveal,reward_distribution,total,num,k,alpha,beta)
          else:
             # print(leaf_count[0])
             # leaf_count[0]+=1
@@ -689,7 +709,7 @@ def minimax_extended(s,first,secondary,trumpPlayed,currentCatch,trumpIndice,play
             # players_copy = copy.deepcopy(players)
             
             currentSuit,s,trumpReveal,chose,playerTrump,trumpPlayed,trumpIndice,players,trumpSuit,finalBid,undo_info = result(s,a,currentSuit,trumpReveal,chose,playerTrump,trumpPlayed,trumpIndice,players,trumpSuit,finalBid,playerChance)
-            newtake = minimax_extended(s,False,False,trumpPlayed,currentCatch,trumpIndice,playerChance,players,currentSuit,trumpReveal,trumpSuit,chose,finalBid,playerTrump,reveal,reward_distribution,total,num,k,alpha,beta)
+            newtake = _minimax_extended_python(s,False,False,trumpPlayed,currentCatch,trumpIndice,playerChance,players,currentSuit,trumpReveal,trumpSuit,chose,finalBid,playerTrump,reveal,reward_distribution,total,num,k,alpha,beta)
             value = max(value,newtake)
             alpha = max(alpha,value)
             currentSuit, trumpReveal, chose, playerTrump, trumpPlayed, trumpIndice = undo_result(s, undo_info, currentSuit, trumpReveal, chose, playerTrump, trumpPlayed, trumpIndice, players)
@@ -729,7 +749,7 @@ def minimax_extended(s,first,secondary,trumpPlayed,currentCatch,trumpIndice,play
             # players_copy1 = copy.deepcopy(players)
             
             currentSuit,s,trumpReveal,chose,playerTrump,trumpPlayed,trumpIndice,players,trumpSuit,finalBid,undo_info = result(s,a,currentSuit,trumpReveal,chose,playerTrump,trumpPlayed,trumpIndice,players,trumpSuit,finalBid,playerChance)
-            newtake = minimax_extended(s,False,False,trumpPlayed,currentCatch,trumpIndice,playerChance,players,currentSuit,trumpReveal,trumpSuit,chose,finalBid,playerTrump,reveal,reward_distribution,total,num,k,alpha,beta)
+            newtake = _minimax_extended_python(s,False,False,trumpPlayed,currentCatch,trumpIndice,playerChance,players,currentSuit,trumpReveal,trumpSuit,chose,finalBid,playerTrump,reveal,reward_distribution,total,num,k,alpha,beta)
            
             value = min(value,newtake)
             beta = min(beta,value)
@@ -759,6 +779,77 @@ def minimax_extended(s,first,secondary,trumpPlayed,currentCatch,trumpIndice,play
             if alpha>beta:
                 break
     return value
+
+
+def _card_to_payload(card):
+    if card is None:
+        return None
+    return {
+        "suit": card.suit,
+        "rank": card.rank,
+        "points": card.points,
+        "order": card.order,
+        "identity": card.identity(),
+    }
+
+
+def _player_to_payload(player):
+    return {
+        "cards": [_card_to_payload(card) for card in player["cards"]],
+        "isTrump": player["isTrump"],
+        "team": player["team"],
+    }
+
+
+def minimax_extended(s,first,secondary,trumpPlayed,currentCatch,trumpIndice,playerChance,players,currentSuit,trumpReveal,trumpSuit,chose,finalBid,playerTrump,reveal,reward_distribution,total,num,k,alpha=-math.inf,beta=math.inf):
+    if _MINIMAX_BACKEND_REQUESTED in ("python", "py"):
+        return _minimax_extended_python(s,first,secondary,trumpPlayed,currentCatch,trumpIndice,playerChance,players,currentSuit,trumpReveal,trumpSuit,chose,finalBid,playerTrump,reveal,reward_distribution,total,num,k,alpha,beta)
+
+    if _MINIMAX_BACKEND_REQUESTED == "rust" and not _RUST_MINIMAX_AVAILABLE:
+        raise RuntimeError(
+            "APP_MINIMAX_BACKEND=rust requested, but rl428_minimax_rust is not available"
+        )
+
+    if not _RUST_MINIMAX_AVAILABLE:
+        return _minimax_extended_python(s,first,secondary,trumpPlayed,currentCatch,trumpIndice,playerChance,players,currentSuit,trumpReveal,trumpSuit,chose,finalBid,playerTrump,reveal,reward_distribution,total,num,k,alpha,beta)
+
+    try:
+        payload = {
+            "s": [_card_to_payload(card) for card in s],
+            "first": bool(first),
+            "secondary": bool(secondary),
+            "trumpPlayed": bool(trumpPlayed),
+            "trumpIndice": [int(x) for x in trumpIndice],
+            "playerChance": int(playerChance),
+            "players": [_player_to_payload(player) for player in players],
+            "currentSuit": currentSuit,
+            "trumpReveal": bool(trumpReveal),
+            "trumpSuit": trumpSuit,
+            "chose": bool(chose),
+            "finalBid": int(finalBid),
+            "playerTrump": _card_to_payload(playerTrump),
+            "total": int(total),
+            "num": int(num),
+            "k": int(k),
+            "alpha": None if not math.isfinite(alpha) else float(alpha),
+            "beta": None if not math.isfinite(beta) else float(beta),
+        }
+
+        result_json = _rl428_minimax_rust.minimax_extended_core(
+            json.dumps(payload, separators=(",", ":"))
+        )
+        parsed = json.loads(result_json)
+
+        reward_distribution.clear()
+        for entry in parsed.get("reward_distribution", []):
+            if entry.get("kind") == "bool":
+                reward_distribution.append((bool(entry.get("action")), int(entry.get("value", 0))))
+            else:
+                reward_distribution.append((entry.get("action"), int(entry.get("value", 0))))
+
+        return int(parsed["value"])
+    except Exception:
+        return _minimax_extended_python(s,first,secondary,trumpPlayed,currentCatch,trumpIndice,playerChance,players,currentSuit,trumpReveal,trumpSuit,chose,finalBid,playerTrump,reveal,reward_distribution,total,num,k,alpha,beta)
 
 
 def minimax_extended_suboptimal(s, first, secondary, trumpPlayed, currentCatch, trumpIndice, 
