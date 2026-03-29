@@ -10,3 +10,4 @@ frontend/dist
 frontend/build
 meta
 tree.txt
+backend/rust_ext/target
