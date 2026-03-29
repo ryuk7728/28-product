@@ -24,13 +24,31 @@ import {
   type PlayedCardInfo,
 } from "../components/panels";
 import { useGameWebSocket } from "../hooks/useGameWebSocket";
-import type { Card as CardType } from "../api/types";
+import type { Card as CardType, RematchStatusMessage } from "../api/types";
 import { PLAYER_NAMES, BOT_BID_BUBBLE_DELAY_MS } from "../config/constants";
 import "../styles/index.scss";
 
 const BOT_SEATS = new Set([0, 2]);
 const BID_SOUND_URL = new URL("../../sounds/bid.mp3", import.meta.url).href;
 const BOT_BID_EVENT_RE = /^P([1-4])\s+(bid\s+(\d+)|passed(?:\s+\(R2\))?)\.$/i;
+
+const HUMAN_SUIT_TIE_PRIORITY: Record<string, number> = {
+  Hearts: 0,
+  Diamonds: 1,
+  Spades: 2,
+  Clubs: 3,
+};
+
+const RANK_DESC_ORDER: Record<string, number> = {
+  Jack: 0,
+  Nine: 1,
+  Ace: 2,
+  Ten: 3,
+  King: 4,
+  Queen: 5,
+  Eight: 6,
+  Seven: 7,
+};
 
 function parseBotBidEvent(logLine: string): { seatIndex: number; text: string } | null {
   const match = logLine.match(BOT_BID_EVENT_RE);
@@ -44,6 +62,50 @@ function parseBotBidEvent(logLine: string): { seatIndex: number; text: string } 
     seatIndex,
     text: bidAmount ? `Bid ${bidAmount}` : "Pass",
   };
+}
+
+function sortHumanCards(cards: CardType[]): CardType[] {
+  if (cards.length <= 1) {
+    return cards;
+  }
+
+  // Hidden placeholder cards should keep backend order.
+  if (cards.some((card) => card.suit === "Hidden" || card.rank === "Hidden")) {
+    return cards;
+  }
+
+  const suitCounts = new Map<string, number>();
+  for (const card of cards) {
+    suitCounts.set(card.suit, (suitCounts.get(card.suit) ?? 0) + 1);
+  }
+
+  const sortedSuits = Array.from(suitCounts.keys()).sort((a, b) => {
+    const countDiff = (suitCounts.get(b) ?? 0) - (suitCounts.get(a) ?? 0);
+    if (countDiff !== 0) {
+      return countDiff;
+    }
+    return (HUMAN_SUIT_TIE_PRIORITY[a] ?? 99) - (HUMAN_SUIT_TIE_PRIORITY[b] ?? 99);
+  });
+
+  const suitOrder = new Map(sortedSuits.map((suit, idx) => [suit, idx]));
+
+  return [...cards].sort((a, b) => {
+    const suitDiff =
+      (suitOrder.get(a.suit) ?? Number.MAX_SAFE_INTEGER) -
+      (suitOrder.get(b.suit) ?? Number.MAX_SAFE_INTEGER);
+    if (suitDiff !== 0) {
+      return suitDiff;
+    }
+
+    const rankDiff =
+      (RANK_DESC_ORDER[a.rank] ?? Number.MAX_SAFE_INTEGER) -
+      (RANK_DESC_ORDER[b.rank] ?? Number.MAX_SAFE_INTEGER);
+    if (rankDiff !== 0) {
+      return rankDiff;
+    }
+
+    return a.cardId.localeCompare(b.cardId);
+  });
 }
 
 export interface GamePageProps {
@@ -82,6 +144,8 @@ export const GamePage: React.FC<GamePageProps> = ({
   const [showTrumpRevealOverlay, setShowTrumpRevealOverlay] = useState(false);
   const [prevTrumpRevealed, setPrevTrumpRevealed] = useState(false);
   const [revealedTrumpInfo, setRevealedTrumpInfo] = useState<{ suit: string; cardId?: string } | null>(null);
+  const [rematchWaitingForSeat, setRematchWaitingForSeat] = useState<number | null>(null);
+  const [rematchReadySeats, setRematchReadySeats] = useState<number[]>([]);
 
   const {
     connected,
@@ -91,6 +155,7 @@ export const GamePage: React.FC<GamePageProps> = ({
     sendTrumpSelect,
     sendPlayCard,
     sendRevealChoice,
+    requestNewGame,
   } = useGameWebSocket({
     gameId: gameId || "",
     roomCode,
@@ -99,6 +164,15 @@ export const GamePage: React.FC<GamePageProps> = ({
     onError: () => {},
     onGameAborted: (reason) => {
       setAbortReason(reason);
+    },
+    onRematchStatus: (msg: RematchStatusMessage) => {
+      if (msg.status === "started") {
+        setRematchWaitingForSeat(null);
+        setRematchReadySeats([]);
+        return;
+      }
+      setRematchWaitingForSeat(msg.waitingForSeatIndex ?? null);
+      setRematchReadySeats(msg.readySeatIndices ?? []);
     },
   });
 
@@ -151,6 +225,13 @@ export const GamePage: React.FC<GamePageProps> = ({
   );
 
   const isHumanTurn = controlledSeatSet.has(turnIndex);
+
+  useEffect(() => {
+    if (phase !== "GAME_OVER") {
+      setRematchWaitingForSeat(null);
+      setRematchReadySeats([]);
+    }
+  }, [phase]);
 
   const getPlayerCards = useCallback(
     (seatIndex: number): CardType[] => {
@@ -379,8 +460,16 @@ export const GamePage: React.FC<GamePageProps> = ({
   );
 
   const handleNewGame = useCallback(() => {
+    const isRoomRematchFlow =
+      Boolean(roomCode) && Boolean(playerToken) && !spectateMode;
+
+    if (isRoomRematchFlow && phase === "GAME_OVER") {
+      requestNewGame();
+      return;
+    }
+
     onGameEnd?.();
-  }, [onGameEnd]);
+  }, [onGameEnd, roomCode, playerToken, spectateMode, phase, requestNewGame]);
 
   const legalCardIds = useMemo(() => {
     if (legalActions?.type === "PLAY_CARD") {
@@ -498,7 +587,8 @@ export const GamePage: React.FC<GamePageProps> = ({
         phase === "PLAY" &&
         legalActions?.type === "PLAY_CARD";
 
-      const cards = getPlayerCards(seatIndex);
+      const rawCards = getPlayerCards(seatIndex);
+      const cards = isBot ? rawCards : sortHumanCards(rawCards);
       const playerBid = displayedBidInfo.seat === seatIndex ? displayedBidInfo.value : null;
       const isBidGlow = humanBidPromptSeat === seatIndex && isLocalSeat;
 
@@ -725,6 +815,21 @@ export const GamePage: React.FC<GamePageProps> = ({
 
     const winnerTeam = gameState.play.winnerTeam;
     const didWin = winnerTeam === 2;
+    const isRoomRematchFlow = Boolean(roomCode) && Boolean(playerToken) && !spectateMode;
+    const localSeat = effectiveControlledSeats[0] ?? playerSeatIndex;
+    const localSeatReady = rematchReadySeats.includes(localSeat);
+
+    let rematchStatusMessage: string | null = null;
+    if (isRoomRematchFlow && rematchWaitingForSeat !== null) {
+      if (localSeatReady) {
+        rematchStatusMessage = `Waiting for ${getSeatDisplayName(rematchWaitingForSeat)} to click New Game...`;
+      } else {
+        const waitingSeat = rematchReadySeats.find((seat) => seat !== localSeat);
+        if (typeof waitingSeat === "number") {
+          rematchStatusMessage = `${getSeatDisplayName(waitingSeat)} is waiting for you.`;
+        }
+      }
+    }
 
     return (
       <GameOverModal
@@ -736,6 +841,9 @@ export const GamePage: React.FC<GamePageProps> = ({
         bidValue={finalBidValue || 0}
         biddingTeam={biddingTeam || "bots"}
         onNewGame={handleNewGame}
+        newGameDisabled={isRoomRematchFlow && localSeatReady}
+        newGameLabel={isRoomRematchFlow && localSeatReady ? "Waiting..." : "New Game"}
+        statusMessage={rematchStatusMessage}
       />
     );
   };

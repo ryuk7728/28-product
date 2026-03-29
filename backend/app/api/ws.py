@@ -16,7 +16,12 @@ from app.engine.bidding_engine import (
 from app.engine.cards_adapter import from_card_id, to_card_id
 from app.engine.game_manager import game_manager
 from app.engine.legal_actions import get_legal_actions
-from app.engine.room_manager import RoomNotFoundError, RoomTokenError, room_manager
+from app.engine.room_manager import (
+    RoomError,
+    RoomNotFoundError,
+    RoomTokenError,
+    room_manager,
+)
 from app.engine.play_engine import (
     init_play_state,
     apply_play_card,
@@ -110,6 +115,18 @@ async def _broadcast_room_state(room_code: str, state) -> None:
     for ws, viewer_seat, can_act in await _room_connections_snapshot(room_code):
         try:
             await _send_state_for_viewer(ws, state, viewer_seat, can_act)
+        except Exception:
+            stale_sockets.append(ws)
+
+    for ws in stale_sockets:
+        await _unregister_room_connection(room_code, ws)
+
+
+async def _broadcast_room_message(room_code: str, payload: dict) -> None:
+    stale_sockets: list[WebSocket] = []
+    for ws, _, _ in await _room_connections_snapshot(room_code):
+        try:
+            await ws.send_json(payload)
         except Exception:
             stale_sockets.append(ws)
 
@@ -482,6 +499,8 @@ async def _run_ws_session(
     viewer_seat: int | None,
     can_act: bool = True,
     broadcast_state: Callable[[object], Awaitable[None]] | None = None,
+    room_code: str | None = None,
+    player_token: str | None = None,
 ) -> None:
     app = websocket.scope["app"]
     pool = app.state.process_pool
@@ -524,6 +543,42 @@ async def _run_ws_session(
 
             if msg_type == "GET_STATE":
                 await send_state_current()
+                continue
+
+            if msg_type == "REQUEST_NEW_GAME":
+                if room_code is None or player_token is None or viewer_seat is None:
+                    await websocket.send_json(
+                        {
+                            "type": "ERROR",
+                            "message": "In-room rematch is available only for room players.",
+                        }
+                    )
+                    continue
+                try:
+                    result = room_manager.request_rematch(
+                        room_code=room_code, player_token=player_token
+                    )
+                except (RoomError, RoomNotFoundError, RoomTokenError, ValueError) as e:
+                    await websocket.send_json({"type": "ERROR", "message": str(e)})
+                    continue
+
+                await _broadcast_room_message(
+                    room_code,
+                    {
+                        "type": "REMATCH_STATUS",
+                        "status": "started" if result.started else "waiting",
+                        "requestedBySeatIndex": viewer_seat,
+                        "readySeatIndices": list(result.ready_seats),
+                        "waitingForSeatIndex": result.waiting_for_seat,
+                        "startingBidderIndex": result.starting_bidder_index,
+                    },
+                )
+
+                if result.started:
+                    await _advance_bots_until_human_any_phase(
+                        state, pool, bot_sem, websocket, game_id, send_state_fn
+                    )
+                    await send_state_current()
                 continue
 
             if not can_act:
@@ -864,6 +919,8 @@ async def ws_room(websocket: WebSocket, room_code: str) -> None:
             broadcast_state=lambda current_state: _broadcast_room_state(
                 room_code, current_state
             ),
+            room_code=room_code,
+            player_token=player_token if not is_spectator else None,
         )
     finally:
         await _unregister_room_connection(room_code, websocket)

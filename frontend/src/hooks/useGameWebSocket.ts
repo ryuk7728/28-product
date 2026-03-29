@@ -9,7 +9,12 @@
  */
 
 import { useEffect, useRef, useCallback, useState } from "react";
-import type { GameState, LegalActions, WsMessage } from "../api/types";
+import type {
+  GameState,
+  LegalActions,
+  RematchStatusMessage,
+  WsMessage,
+} from "../api/types";
 
 export interface UseGameWebSocketOptions {
   gameId?: string;
@@ -20,6 +25,7 @@ export interface UseGameWebSocketOptions {
   onLegalActions?: (actions: LegalActions) => void;
   onError?: (message: string) => void;
   onGameAborted?: (reason: string) => void;
+  onRematchStatus?: (message: RematchStatusMessage) => void;
   onConnectionChange?: (connected: boolean) => void;
 }
 
@@ -31,6 +37,7 @@ export interface UseGameWebSocketReturn {
   sendTrumpSelect: (seatIndex: number, cardId: string) => void;
   sendPlayCard: (seatIndex: number, cardId: string) => void;
   sendRevealChoice: (seatIndex: number, reveal: boolean) => void;
+  requestNewGame: () => void;
   requestState: () => void;
 }
 
@@ -139,6 +146,10 @@ export function useGameWebSocket(
             callbacksRef.current.onGameAborted?.(msg.reason);
             break;
 
+          case "REMATCH_STATUS":
+            callbacksRef.current.onRematchStatus?.(msg);
+            break;
+
           default:
             console.warn("[WS] Unknown message type:", msg);
         }
@@ -215,6 +226,10 @@ export function useGameWebSocket(
     sendMessage({ type: "GET_STATE" });
   }, [sendMessage]);
 
+  const requestNewGame = useCallback(() => {
+    sendMessage({ type: "REQUEST_NEW_GAME" });
+  }, [sendMessage]);
+
   return {
     connected,
     gameState,
@@ -223,6 +238,7 @@ export function useGameWebSocket(
     sendTrumpSelect,
     sendPlayCard,
     sendRevealChoice,
+    requestNewGame,
     requestState,
   };
 }

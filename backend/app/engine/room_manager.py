@@ -38,6 +38,7 @@ class Room:
     game_id: str | None = None
     seat_tokens: dict[int, str] = field(default_factory=dict)
     seat_names: dict[int, str] = field(default_factory=dict)
+    rematch_ready_seats: set[int] = field(default_factory=set)
 
     @property
     def players_joined(self) -> int:
@@ -57,6 +58,14 @@ class RoomAssignment:
     seat_name: str
     waiting_for_player: bool
     players_joined: int
+
+
+@dataclass(frozen=True)
+class RematchRequestResult:
+    started: bool
+    waiting_for_seat: int | None
+    ready_seats: tuple[int, ...]
+    starting_bidder_index: int | None
 
 
 class RoomManager:
@@ -120,6 +129,7 @@ class RoomManager:
             room.seat_names.get(3, "Player 2"),
         ]
         room.game_id = state.game_id
+        room.rematch_ready_seats.clear()
 
     def create_room(self, *, player_name: str) -> RoomAssignment:
         with self._lock:
@@ -218,6 +228,59 @@ class RoomManager:
             if seat_index is None:
                 raise RoomTokenError("Invalid room token.")
             return room, seat_index
+
+    def request_rematch(
+        self, *, room_code: str, player_token: str
+    ) -> RematchRequestResult:
+        """
+        Mark one human player as ready for rematch.
+        Starts the next game in-place only after both human seats are ready.
+        """
+        with self._lock:
+            self._cleanup_expired_locked()
+            room = self._lookup_room_locked(room_code)
+            seat_index = self._find_seat_for_token_locked(room, player_token.strip())
+            if seat_index is None:
+                raise RoomTokenError("Invalid room token.")
+            if seat_index not in HUMAN_ROOM_SEATS:
+                raise RoomError("Only human room seats can request rematch.")
+            if room.game_id is None:
+                raise RoomError("Game is not ready yet.")
+
+            state = game_manager.get_game(room.game_id)
+            if state is None:
+                raise RoomError("Game not found.")
+            if state.phase != "GAME_OVER":
+                raise RoomError("Rematch is available only after game over.")
+
+            room.rematch_ready_seats.add(seat_index)
+            ready = tuple(sorted(room.rematch_ready_seats))
+
+            all_ready = all(seat in room.rematch_ready_seats for seat in HUMAN_ROOM_SEATS)
+            if not all_ready:
+                waiting_for = next(
+                    seat for seat in HUMAN_ROOM_SEATS if seat not in room.rematch_ready_seats
+                )
+                return RematchRequestResult(
+                    started=False,
+                    waiting_for_seat=waiting_for,
+                    ready_seats=ready,
+                    starting_bidder_index=None,
+                )
+
+            next_starting_bidder = (state.starting_bidder_index + 1) % 4
+            game_manager.restart_game_in_place(
+                state, starting_bidder_index=next_starting_bidder
+            )
+            room.starting_bidder_index = next_starting_bidder
+            room.rematch_ready_seats.clear()
+
+            return RematchRequestResult(
+                started=True,
+                waiting_for_seat=None,
+                ready_seats=(),
+                starting_bidder_index=next_starting_bidder,
+            )
 
 
 room_manager = RoomManager()

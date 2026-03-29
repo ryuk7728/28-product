@@ -216,5 +216,27 @@ class GameManager:
             else "Redeal performed from fixed deck file (first-4 re-dealt)."
         )
 
+    def restart_game_in_place(
+        self, state: GameState, *, starting_bidder_index: int
+    ) -> None:
+        """
+        Full in-place restart for multiplayer rematch while keeping the same game_id.
+        Resets state to a fresh BIDDING_R1 game and rotates starting bidder as requested.
+        """
+        if starting_bidder_index < 0 or starting_bidder_index > 3:
+            raise ValueError("startingBidderIndex must be in 0..3")
+
+        state.starting_bidder_index = starting_bidder_index
+        state.bidding_order = [(starting_bidder_index + i) % 4 for i in range(4)]
+
+        self.redeal_first4_in_place(state)
+
+        # Fresh rematch should also reset suit-knowledge and game log context.
+        state.suit_matrix = [[1, 1, 1, 1] for _ in range(4)]
+        state.event_log = [
+            "Game restarted (same room).",
+            f"Starting bidder: P{starting_bidder_index + 1}",
+        ]
+
 
 game_manager = GameManager()

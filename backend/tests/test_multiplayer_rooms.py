@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
+from app.engine.game_manager import game_manager
 from app.main import app
 
 
@@ -20,6 +21,29 @@ def _drain_state_and_actions(ws, max_msgs: int = 60) -> tuple[dict, dict]:
         if state is not None and actions is not None:
             return state, actions
     raise AssertionError("Timed out waiting for state/actions.")
+
+
+def _receive_until(ws, expected_type: str, max_msgs: int = 80) -> dict:
+    for _ in range(max_msgs):
+        msg = ws.receive_json()
+        if msg.get("type") == expected_type:
+            return msg
+        if msg.get("type") == "ERROR":
+            raise AssertionError(f"Unexpected WS error: {msg.get('message')}")
+    raise AssertionError(f"Timed out waiting for {expected_type}.")
+
+
+def _receive_rematch_status(ws, expected_status: str, max_msgs: int = 120) -> dict:
+    for _ in range(max_msgs):
+        msg = ws.receive_json()
+        msg_type = msg.get("type")
+        if msg_type == "ERROR":
+            raise AssertionError(f"Unexpected WS error: {msg.get('message')}")
+        if msg_type != "REMATCH_STATUS":
+            continue
+        if msg.get("status") == expected_status:
+            return msg
+    raise AssertionError(f"Timed out waiting for REMATCH_STATUS={expected_status}.")
 
 
 def test_room_create_join_reconnect_flow() -> None:
@@ -123,3 +147,54 @@ def test_ws_room_spectator_gets_full_state_and_read_only_actions() -> None:
             err = ws.receive_json()
             assert err["type"] == "ERROR"
             assert "read-only" in err["message"].lower()
+
+
+def test_room_rematch_requires_both_humans_and_rotates_starting_bidder() -> None:
+    with TestClient(app) as client:
+        created = client.post(
+            "/rooms", json={"startingBidderIndex": 0, "playerName": "Alice"}
+        ).json()
+        joined = client.post(
+            "/rooms/join",
+            json={"roomCode": created["roomCode"], "playerName": "Bob"},
+        ).json()
+
+        seat1 = created if created["seatIndex"] == 1 else joined
+        seat3 = joined if seat1 is created else created
+        room_code = created["roomCode"]
+        game_id = joined["gameId"]
+        assert game_id
+
+        state_obj = game_manager.get_game(game_id)
+        assert state_obj is not None
+        previous_start = state_obj.starting_bidder_index
+        state_obj.phase = "GAME_OVER"
+        state_obj.winnerTeam = 2
+        state_obj.team2Points = 18
+        state_obj.team1Points = 10
+
+        with client.websocket_connect(
+            f"/ws/rooms/{room_code}?token={seat1['playerToken']}"
+        ) as ws1, client.websocket_connect(
+            f"/ws/rooms/{room_code}?token={seat3['playerToken']}"
+        ) as ws2:
+            _drain_state_and_actions(ws1)
+            _drain_state_and_actions(ws2)
+
+            # First human clicks New Game -> waiting for second human.
+            ws1.send_json({"type": "REQUEST_NEW_GAME"})
+            waiting_msg = _receive_rematch_status(ws1, "waiting")
+            assert waiting_msg["status"] == "waiting"
+            assert waiting_msg["waitingForSeatIndex"] in (1, 3)
+            assert waiting_msg["waitingForSeatIndex"] != seat1["seatIndex"]
+            assert seat1["seatIndex"] in waiting_msg["readySeatIndices"]
+
+            # Second human clicks New Game -> rematch starts immediately.
+            ws2.send_json({"type": "REQUEST_NEW_GAME"})
+            started_msg = _receive_rematch_status(ws2, "started")
+            assert started_msg["status"] == "started"
+
+            updated = _receive_until(ws2, "STATE_UPDATE")["state"]
+            assert updated["gameId"] == game_id
+            assert updated["phase"] != "GAME_OVER"
+            assert updated["startingBidderIndex"] == (previous_start + 1) % 4

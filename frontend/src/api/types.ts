@@ -99,4 +99,14 @@ export type WsMessage =
   | { type: "STATE_UPDATE"; state: GameState }
   | { type: "LEGAL_ACTIONS"; actions: LegalActions }
   | { type: "ERROR"; message: string }
-  | { type: "GAME_ABORTED"; reason: string };
+  | { type: "GAME_ABORTED"; reason: string }
+  | RematchStatusMessage;
+
+export type RematchStatusMessage = {
+  type: "REMATCH_STATUS";
+  status: "waiting" | "started";
+  requestedBySeatIndex: number;
+  readySeatIndices: number[];
+  waitingForSeatIndex: number | null;
+  startingBidderIndex: number | null;
+};
