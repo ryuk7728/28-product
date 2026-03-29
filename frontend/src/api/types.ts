@@ -96,7 +96,7 @@ export type LegalActions =
   | { type: "NO_ACTION"; seatIndex?: number };
 
 export type WsMessage =
-  | { type: "STATE_UPDATE"; state: GameState }
+  | { type: "STATE_UPDATE"; state: GameState; stateSeq?: number }
   | { type: "LEGAL_ACTIONS"; actions: LegalActions }
   | { type: "ERROR"; message: string }
   | { type: "GAME_ABORTED"; reason: string }

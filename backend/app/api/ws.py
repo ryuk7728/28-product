@@ -41,6 +41,14 @@ EMPTY_TABLE_PAUSE_SECONDS = 1
 
 _ROOM_CONNECTIONS: dict[str, list[tuple[WebSocket, int | None, bool]]] = defaultdict(list)
 _ROOM_REGISTRY_LOCK = asyncio.Lock()
+_GAME_STATE_SEQ: dict[str, int] = defaultdict(int)
+_STATE_SEQ_LOCK = asyncio.Lock()
+
+
+async def _next_state_seq(game_id: str) -> int:
+    async with _STATE_SEQ_LOCK:
+        _GAME_STATE_SEQ[game_id] += 1
+        return _GAME_STATE_SEQ[game_id]
 
 
 async def _register_room_connection(
@@ -97,7 +105,12 @@ def _filter_actions_for_viewer(
 
 
 async def _send_state_for_viewer(
-    websocket: WebSocket, state, viewer_seat: int | None, can_act: bool
+    websocket: WebSocket,
+    state,
+    viewer_seat: int | None,
+    can_act: bool,
+    *,
+    state_seq: int | None = None,
 ) -> None:
     actions = get_legal_actions(state)
     state_payload = (
@@ -106,15 +119,19 @@ async def _send_state_for_viewer(
         else state.to_public_dict_for_viewer(viewer_seat)
     )
     filtered_actions = _filter_actions_for_viewer(actions, viewer_seat, can_act)
-    await websocket.send_json({"type": "STATE_UPDATE", "state": state_payload})
+    seq = state_seq if state_seq is not None else await _next_state_seq(state.game_id)
+    await websocket.send_json({"type": "STATE_UPDATE", "state": state_payload, "stateSeq": seq})
     await websocket.send_json({"type": "LEGAL_ACTIONS", "actions": filtered_actions})
 
 
 async def _broadcast_room_state(room_code: str, state) -> None:
     stale_sockets: list[WebSocket] = []
+    seq = await _next_state_seq(state.game_id)
     for ws, viewer_seat, can_act in await _room_connections_snapshot(room_code):
         try:
-            await _send_state_for_viewer(ws, state, viewer_seat, can_act)
+            await _send_state_for_viewer(
+                ws, state, viewer_seat, can_act, state_seq=seq
+            )
         except Exception:
             stale_sockets.append(ws)
 

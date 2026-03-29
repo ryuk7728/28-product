@@ -50,14 +50,45 @@ export function useGameWebSocket(
   const [connected, setConnected] = useState(false);
   const [gameState, setGameState] = useState<GameState | null>(null);
   const [legalActions, setLegalActions] = useState<LegalActions | null>(null);
+  const [reconnectTick, setReconnectTick] = useState(0);
+  const reconnectTimerRef = useRef<number | null>(null);
+  const reconnectAttemptsRef = useRef(0);
+  const shouldReconnectRef = useRef(true);
+  const latestStateSeqRef = useRef(-1);
 
   // Store callbacks in refs to avoid triggering reconnections
   const callbacksRef = useRef(options);
   callbacksRef.current = options;
 
+  const scheduleReconnect = useCallback(() => {
+    if (!shouldReconnectRef.current) return;
+    if (reconnectTimerRef.current !== null) return;
+
+    const attempt = reconnectAttemptsRef.current + 1;
+    reconnectAttemptsRef.current = attempt;
+    const delayMs = Math.min(10000, 500 * Math.pow(2, Math.min(attempt - 1, 5)));
+
+    reconnectTimerRef.current = window.setTimeout(() => {
+      reconnectTimerRef.current = null;
+      setReconnectTick((v) => v + 1);
+    }, delayMs);
+  }, []);
+
+  useEffect(() => {
+    // Reset stale-state guard when switching connection identity.
+    latestStateSeqRef.current = -1;
+    reconnectAttemptsRef.current = 0;
+  }, [gameId, roomCode, playerToken, spectateMode]);
+
   // Connect to WebSocket - only depends on gameId
   useEffect(() => {
     if (!gameId && !roomCode) return;
+    shouldReconnectRef.current = true;
+
+    if (reconnectTimerRef.current !== null) {
+      window.clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
 
     // Prevent duplicate connections
     if (wsRef.current?.readyState === WebSocket.OPEN ||
@@ -106,18 +137,28 @@ export function useGameWebSocket(
     ws.onopen = () => {
       console.log("[WS] Connected");
       setConnected(true);
+      reconnectAttemptsRef.current = 0;
       callbacksRef.current.onConnectionChange?.(true);
+      try {
+        ws.send(JSON.stringify({ type: "GET_STATE" }));
+      } catch {
+        // Ignore transport race errors.
+      }
     };
 
     ws.onclose = () => {
       console.log("[WS] Disconnected");
       setConnected(false);
       callbacksRef.current.onConnectionChange?.(false);
+      scheduleReconnect();
     };
 
     ws.onerror = (error) => {
       console.error("[WS] Error:", error);
       callbacksRef.current.onError?.("WebSocket connection error");
+      if (ws.readyState !== WebSocket.OPEN) {
+        scheduleReconnect();
+      }
     };
 
     ws.onmessage = (event) => {
@@ -127,6 +168,13 @@ export function useGameWebSocket(
 
         switch (msg.type) {
           case "STATE_UPDATE":
+            if (typeof msg.stateSeq === "number") {
+              if (msg.stateSeq <= latestStateSeqRef.current) {
+                console.warn("[WS] Ignoring stale STATE_UPDATE seq:", msg.stateSeq);
+                break;
+              }
+              latestStateSeqRef.current = msg.stateSeq;
+            }
             setGameState(msg.state);
             callbacksRef.current.onStateUpdate?.(msg.state);
             break;
@@ -159,13 +207,46 @@ export function useGameWebSocket(
     };
 
     return () => {
+      shouldReconnectRef.current = false;
+      if (reconnectTimerRef.current !== null) {
+        window.clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
+      }
       console.log("[WS] Cleaning up connection");
       if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
         ws.close();
       }
       wsRef.current = null;
     };
-  }, [gameId, roomCode, playerToken, spectateMode]); // Reconnect when connection identity changes
+  }, [gameId, roomCode, playerToken, spectateMode, reconnectTick, scheduleReconnect]); // Reconnect when identity/tick changes
+
+  useEffect(() => {
+    const resyncOnReturn = () => {
+      if (document.visibilityState === "hidden") {
+        return;
+      }
+      const ws = wsRef.current;
+      if (ws?.readyState === WebSocket.OPEN) {
+        try {
+          ws.send(JSON.stringify({ type: "GET_STATE" }));
+        } catch {
+          // Ignore transient send issues.
+        }
+        return;
+      }
+      if (gameId || roomCode) {
+        setReconnectTick((v) => v + 1);
+      }
+    };
+
+    document.addEventListener("visibilitychange", resyncOnReturn);
+    window.addEventListener("focus", resyncOnReturn);
+
+    return () => {
+      document.removeEventListener("visibilitychange", resyncOnReturn);
+      window.removeEventListener("focus", resyncOnReturn);
+    };
+  }, [gameId, roomCode]);
 
   // Send message helper
   const sendMessage = useCallback((msg: object) => {
