@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import os
 from pathlib import Path
 
@@ -51,6 +51,36 @@ def _get_str_optional(name: str) -> str | None:
     return val
 
 
+def _get_k_by_catch_map(name: str) -> dict[int, int]:
+    """
+    Parse env like: "1:3,2:3,3:4,4:4,5:4,6:3,7:2,8:1"
+    Returns empty dict when unset/blank.
+    """
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return {}
+
+    out: dict[int, int] = {}
+    for part in raw.split(","):
+        token = part.strip()
+        if token == "":
+            continue
+
+        if ":" not in token:
+            raise ValueError(f"Invalid {name} token (expected catch:k): {token!r}")
+
+        catch_s, k_s = token.split(":", 1)
+        catch = int(catch_s.strip())
+        k_val = int(k_s.strip())
+        if catch <= 0:
+            raise ValueError(f"Invalid catch number in {name}: {catch}")
+        if k_val <= 0:
+            raise ValueError(f"Invalid k value in {name}: {k_val}")
+        out[catch] = k_val
+
+    return out
+
+
 @dataclass(frozen=True)
 class Settings:
     app_dir: Path = Path(__file__).resolve().parent
@@ -87,6 +117,9 @@ class Settings:
 
     # k control
     k_override: int | None = _get_int_optional("APP_K_OVERRIDE")
+    k_by_catch: dict[int, int] = field(
+        default_factory=lambda: _get_k_by_catch_map("APP_K_BY_CATCH")
+    )
 
     # Fixed-deck mode (for deterministic reproduction)
     fixed_deck_enabled: bool = _get_bool("APP_FIXED_DECK_ENABLED", False)

@@ -32,8 +32,9 @@ def _rank_code_from_card_id(card_id: str) -> str:
 
 
 def _strength_key(rank_codes: List[str]) -> Tuple[int, ...]:
-    # smaller index means stronger; for descending lexicographic we invert sign
-    return tuple(-RANK_STRENGTH[r] for r in rank_codes)
+    # smaller index means stronger; plain ascending lexicographic comparison
+    # keeps stronger groups ahead in tie-breaks.
+    return tuple(RANK_STRENGTH[r] for r in rank_codes)
 
 
 @dataclass(frozen=True)
