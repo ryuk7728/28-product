@@ -19,6 +19,7 @@ export type GameState = {
   players: Array<{
     seatIndex: number;
     cards: Card[];
+    debugCards?: Card[];
     cardCount: number;
     team: number;
     isBidder: boolean;

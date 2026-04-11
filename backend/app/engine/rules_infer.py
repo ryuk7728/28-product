@@ -55,7 +55,9 @@ def _base_bid_from_first_group(first: List[str]) -> int:
         return 14
 
     if l1 == 2:
-        if "J" in s and any(r in s for r in ("9", "A", "10")):
+        if "J" in s:
+            return 15
+        if "9" in s and any(r in s for r in ("A", "10")):
             return 15
         return 14
 
@@ -70,16 +72,7 @@ def _base_bid_from_first_group(first: List[str]) -> int:
         ):
             return 16
 
-        if "J" in s and (("A" in s) or ("10" in s)):
-            return 15
-
-        if "J" in s and ("K" in s) and ("Q" in s):
-            return 15
-
-        if "J" in s:
-            return 14
-
-        if ("9" in s) and ("A" in s) and ("K" in s):
+        if any(r in POINT_CARDS for r in first):
             return 15
 
         return 14

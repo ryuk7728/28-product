@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import Literal, Any, Final
 
 from app.legacy.cards import Cards
+from app.settings import settings
 
 
 Phase = Literal[
@@ -215,12 +216,20 @@ class GameState:
         - The viewer sees their own cards.
         - All other hands are hidden (only card counts preserved).
         """
+        from app.engine.serializer import serialize_card
+
         data = self.to_public_dict()
         data["viewerSeatIndex"] = viewer_seat_index
 
         for p in data["players"]:
             if p["seatIndex"] == viewer_seat_index:
                 continue
+
+            if settings.debug:
+                seat_index = p["seatIndex"]
+                p["debugCards"] = [
+                    serialize_card(c) for c in self.players_cards[seat_index]
+                ]
 
             hidden_cards = [
                 {

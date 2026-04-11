@@ -128,6 +128,7 @@ export const GamePage: React.FC<GamePageProps> = ({
   onGameEnd,
 }) => {
   const [selectedCard, setSelectedCard] = useState<string | null>(null);
+  const [showBotCards, setShowBotCards] = useState(false);
   const [abortReason, setAbortReason] = useState<string | null>(null);
   const [botBidBubble, setBotBidBubble] = useState<{
     seatIndex: number;
@@ -236,6 +237,13 @@ export const GamePage: React.FC<GamePageProps> = ({
   const getPlayerCards = useCallback(
     (seatIndex: number): CardType[] => {
       return gameState?.players[seatIndex]?.cards || [];
+    },
+    [gameState]
+  );
+
+  const getPlayerDebugCards = useCallback(
+    (seatIndex: number): CardType[] | undefined => {
+      return gameState?.players[seatIndex]?.debugCards;
     },
     [gameState]
   );
@@ -587,7 +595,10 @@ export const GamePage: React.FC<GamePageProps> = ({
         phase === "PLAY" &&
         legalActions?.type === "PLAY_CARD";
 
-      const rawCards = getPlayerCards(seatIndex);
+      const rawCards =
+        isBot && showBotCards
+          ? getPlayerDebugCards(seatIndex) || getPlayerCards(seatIndex)
+          : getPlayerCards(seatIndex);
       const cards = isBot ? rawCards : sortHumanCards(rawCards);
       const playerBid = displayedBidInfo.seat === seatIndex ? displayedBidInfo.value : null;
       const isBidGlow = humanBidPromptSeat === seatIndex && isLocalSeat;
@@ -611,7 +622,7 @@ export const GamePage: React.FC<GamePageProps> = ({
         handContent: (
           <PlayerHand
             cards={cards}
-            faceUp={spectateMode || isLocalSeat}
+            faceUp={spectateMode || isLocalSeat || (isBot && showBotCards)}
             isHorizontal={isHorizontal}
             isCompact={renderSeatIndex !== 1}
             noOverlap={isLocalSeat}
@@ -636,11 +647,13 @@ export const GamePage: React.FC<GamePageProps> = ({
     controlledSeatSet,
     mapSeatToRenderSeat,
     getPlayerCards,
+    getPlayerDebugCards,
     displayedBidInfo,
     humanBidPromptSeat,
     getSeatDisplayName,
     handleCardClick,
     spectateMode,
+    showBotCards,
   ]);
 
   const renderCenterContent = () => {
@@ -914,6 +927,17 @@ export const GamePage: React.FC<GamePageProps> = ({
 
   return (
     <div>
+      <div className="debug-controls">
+        <label>
+          <input
+            type="checkbox"
+            checked={showBotCards}
+            onChange={(e) => setShowBotCards(e.target.checked)}
+          />
+          Show Bot Cards
+        </label>
+      </div>
+
       <GameArena
         players={players}
         centerContent={renderCenterContent()}

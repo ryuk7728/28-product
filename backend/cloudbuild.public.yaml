@@ -5,7 +5,8 @@ steps:
       - -f
       - backend/Dockerfile
       - -t
-      - gcr.io/$PROJECT_ID/game28-api-public
+      - gcr.io/$PROJECT_ID/game28-api-rust
       - .
+
 images:
-  - gcr.io/$PROJECT_ID/game28-api-public
+  - gcr.io/$PROJECT_ID/game28-api-rust
