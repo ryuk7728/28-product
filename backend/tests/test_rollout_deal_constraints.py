@@ -116,3 +116,115 @@ def test_rollout_worker_fallback_does_not_hang_when_constraints_impossible(
 # monke = MonkeyPatch()
 
 # test_rollout_worker_fallback_does_not_hang_when_constraints_impossible(monke)
+
+
+def test_rollout_worker_respects_bidder_spade_non_trump_inference(monkeypatch) -> None:
+    sampled_suits: list[str] = []
+
+    def fake_minimax_extended(*args, **kwargs):
+        sampled_suits.append(args[10])
+        reward_distribution = args[15]
+        reward_distribution.append((True, 0.0))
+        return 0.0
+
+    monkeypatch.setattr(rb.legacy_minimax, "minimax_extended", fake_minimax_extended)
+
+    rb.settings = Settings(rollouts=1, workers=1, rollout_deal_retries=5)
+
+    snapshot = {
+        "botSeat": 0,
+        "finalBid": 2,
+        "bidderSeat": 1,
+        "leaderIndex": 1,
+        "catchNumber": 1,
+        "k": 1,
+        "trumpReveal": False,
+        "knownTrumpSuit": None,
+        "chose": False,
+        "currentSuit": "Spades",
+        "trumpPlayed": False,
+        "trumpIndice": [0, 0, 0, 0],
+        "sCardIds": ["Spades_Ace"],
+        "playedCardIds": ["Spades_Ace"],
+        "concealedTrumpCardId": None,
+        "botHandCardIds": [
+            "Hearts_Seven",
+            "Hearts_Eight",
+            "Diamonds_Seven",
+            "Diamonds_Eight",
+            "Clubs_Seven",
+            "Clubs_Eight",
+            "Spades_Seven",
+            "Spades_Eight",
+        ],
+        "handSizes": [8, 6, 8, 8],
+        "suitMatrix": [[1, 1, 1, 1] for _ in range(4)],
+        "trumpMatrix": [
+            [1, 1, 1, 1],
+            [1, 1, 1, 1],
+            [1, 0, 1, 1],
+            [1, 1, 1, 1],
+        ],
+    }
+
+    out = rb.rollout_worker(snapshot=snapshot, n=40, seed=123)
+
+    assert out.get(True) == 40
+    assert sampled_suits
+    assert all(suit != "Spades" for suit in sampled_suits)
+
+
+def test_rollout_worker_respects_bidder_diamond_non_trump_inference(monkeypatch) -> None:
+    sampled_suits: list[str] = []
+
+    def fake_minimax_extended(*args, **kwargs):
+        sampled_suits.append(args[10])
+        reward_distribution = args[15]
+        reward_distribution.append((True, 0.0))
+        return 0.0
+
+    monkeypatch.setattr(rb.legacy_minimax, "minimax_extended", fake_minimax_extended)
+
+    rb.settings = Settings(rollouts=1, workers=1, rollout_deal_retries=5)
+
+    snapshot = {
+        "botSeat": 0,
+        "finalBid": 2,
+        "bidderSeat": 1,
+        "leaderIndex": 1,
+        "catchNumber": 1,
+        "k": 1,
+        "trumpReveal": False,
+        "knownTrumpSuit": None,
+        "chose": False,
+        "currentSuit": "Diamonds",
+        "trumpPlayed": False,
+        "trumpIndice": [0, 0, 0, 0],
+        "sCardIds": ["Diamonds_Ace"],
+        "playedCardIds": ["Diamonds_Ace"],
+        "concealedTrumpCardId": None,
+        "botHandCardIds": [
+            "Hearts_Seven",
+            "Hearts_Eight",
+            "Spades_Seven",
+            "Spades_Eight",
+            "Clubs_Seven",
+            "Clubs_Eight",
+            "Diamonds_Seven",
+            "Diamonds_Eight",
+        ],
+        "handSizes": [8, 6, 8, 8],
+        "suitMatrix": [[1, 1, 1, 1] for _ in range(4)],
+        "trumpMatrix": [
+            [1, 1, 1, 1],
+            [1, 0, 1, 1],
+            [1, 1, 1, 1],
+            [1, 1, 1, 1],
+        ],
+    }
+
+    out = rb.rollout_worker(snapshot=snapshot, n=40, seed=456)
+
+    assert out.get(True) == 40
+    assert sampled_suits
+    assert all(suit != "Diamonds" for suit in sampled_suits)

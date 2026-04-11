@@ -107,7 +107,7 @@ def _predict_bid(groups: List[List[str]]) -> int:
     bid = _base_bid_from_first_group(first)
 
     first_group_points = sum(RANK_POINTS.get(rank, 0) for rank in first)
-    if len(first) >= 2 and first_group_points >= 2:
+    if len(first) >= 2:
         extra_jacks = sum(1 for g in groups[1:] for r in g if r == "J")
         bid += extra_jacks
 

@@ -148,6 +148,27 @@ def _card_suit_from_id(card_id: str) -> str:
     return card_id.split("_", 1)[0]
 
 
+def _allowed_trump_indicator_ids(
+    pool_ids: list[str],
+    *,
+    bidder_seat: int,
+    trump_matrix: list[list[int]],
+) -> list[str]:
+    allowed: list[str] = []
+    for cid in pool_ids:
+        suit = _card_suit_from_id(cid)
+        row = SUIT_MATRIX_INDEX.get(suit)
+        if row is None:
+            allowed.append(cid)
+            continue
+        try:
+            if trump_matrix[row][bidder_seat] == 1:
+                allowed.append(cid)
+        except Exception:
+            allowed.append(cid)
+    return allowed
+
+
 def _deal_unknown_with_suit_constraints(
     *,
     rng: random.Random,
@@ -255,6 +276,7 @@ def rollout_worker(snapshot: dict[str, Any], n: int, seed: int) -> dict[Any, int
 
     # Suit constraints matrix (rows: H, D, S, C; cols: seat 0..3)
     suit_matrix = snapshot.get("suitMatrix") or [[1, 1, 1, 1] for _ in range(4)]
+    trump_matrix = snapshot.get("trumpMatrix") or [[1, 1, 1, 1] for _ in range(4)]
     max_deal_retries = max(0, int(settings.rollout_deal_retries))
 
     # Base known set for this bot (own hand + played)
@@ -275,11 +297,13 @@ def rollout_worker(snapshot: dict[str, Any], n: int, seed: int) -> dict[Any, int
 
     for _ in range(n):
         # Build unknown pool
-        pool_ids = [cid for cid in deck_ids if cid not in base_known]
+        base_pool_ids = [cid for cid in deck_ids if cid not in base_known]
+        pool_ids = base_pool_ids[:]
 
         # Determine sim_player_trump and sim_trump_suit
         sim_player_trump = None
         sim_trump_suit = None
+        trump_sample_constrained = False
 
         # If trump is revealed, the suit is known.
         # Keep playerTrump non-None for legacy logic.
@@ -319,9 +343,23 @@ def rollout_worker(snapshot: dict[str, Any], n: int, seed: int) -> dict[Any, int
                 )
                 sim_trump_suit = sim_player_trump.suit
             else:
-                # non-bidder: trump unknown -> sample from pool
-                idx = rng.randrange(len(pool_ids))
-                sampled = pool_ids.pop(idx)
+                # non-bidder: trump unknown -> sample from pool, honoring bidder-led
+                # pre-reveal trump impossibility when possible.
+                allowed_indicator_ids = _allowed_trump_indicator_ids(
+                    base_pool_ids,
+                    bidder_seat=bidder_seat,
+                    trump_matrix=trump_matrix,
+                )
+                candidate_ids = (
+                    allowed_indicator_ids if allowed_indicator_ids else base_pool_ids
+                )
+                trump_sample_constrained = (
+                    bool(allowed_indicator_ids)
+                    and len(allowed_indicator_ids) < len(base_pool_ids)
+                )
+                idx = rng.randrange(len(candidate_ids))
+                sampled = candidate_ids[idx]
+                pool_ids = [cid for cid in base_pool_ids if cid != sampled]
                 sim_player_trump = from_card_id(sampled)
                 sim_trump_suit = sim_player_trump.suit
 
@@ -426,18 +464,158 @@ def rollout_worker(snapshot: dict[str, Any], n: int, seed: int) -> dict[Any, int
         seats_to_fill = [s for s in range(4) if s != bot_seat]
 
         dealt_map: dict[int, list[str]] | None = None
-        if max_deal_retries > 0:
-            for _attempt in range(max_deal_retries):
-                rng.shuffle(pool_ids)
+        retry_limit = max_deal_retries
+        if trump_sample_constrained and not trumpReveal and bot_seat != bidder_seat:
+            retry_limit = max(retry_limit, 50)
+
+        if retry_limit > 0:
+            for _attempt in range(retry_limit):
+                current_pool_ids = pool_ids[:]
+                current_hands = [cards[:] for cards in hands]
+                current_need_sizes = list(need_sizes)
+                current_sim_player_trump = sim_player_trump
+                current_sim_trump_suit = sim_trump_suit
+
+                if trump_sample_constrained and not trumpReveal and bot_seat != bidder_seat:
+                    retry_pool_ids = base_pool_ids[:]
+                    allowed_indicator_ids = _allowed_trump_indicator_ids(
+                        retry_pool_ids,
+                        bidder_seat=bidder_seat,
+                        trump_matrix=trump_matrix,
+                    )
+                    if not allowed_indicator_ids:
+                        break
+
+                    sampled = rng.choice(allowed_indicator_ids)
+                    current_sim_player_trump = from_card_id(sampled)
+                    current_sim_trump_suit = current_sim_player_trump.suit
+                    current_pool_ids = [cid for cid in retry_pool_ids if cid != sampled]
+                    rng.shuffle(current_pool_ids)
+                    current_hands = [[], [], [], []]
+                    current_hands[bot_seat] = bot_hand[:]
+                    current_need_sizes = list(hand_sizes)
+
+                    try:
+                        if len(s_card_ids) >= 1 and currentSuit:
+                            led_suit = currentSuit
+                            if all(
+                                _card_suit_from_id(cid) == led_suit for cid in s_card_ids
+                            ):
+                                prior_played = [
+                                    cid for cid in played_set if cid not in s_set
+                                ]
+                                if all(
+                                    _card_suit_from_id(cid) != led_suit
+                                    for cid in prior_played
+                                ):
+                                    jack_id = f"{led_suit}_Jack"
+                                    if jack_id in current_pool_ids:
+                                        actor = (leaderIndex + len(s_card_ids)) % 4
+                                        if actor == bot_seat:
+                                            remaining_after_actor = [
+                                                (leaderIndex + i) % 4
+                                                for i in range(len(s_card_ids) + 1, 4)
+                                            ]
+
+                                            row = SUIT_MATRIX_INDEX.get(led_suit)
+                                            candidates: list[int] = []
+                                            for seat in remaining_after_actor:
+                                                if current_need_sizes[seat] <= 0:
+                                                    continue
+                                                if (
+                                                    row is not None
+                                                    and suit_matrix[row][seat] == 0
+                                                ):
+                                                    continue
+                                                candidates.append(seat)
+
+                                            if candidates:
+                                                target = rng.choice(candidates)
+                                                current_hands[target].append(
+                                                    from_card_id(jack_id)
+                                                )
+                                                current_need_sizes[target] -= 1
+                                                if current_need_sizes[target] < 0:
+                                                    current_need_sizes[target] = 0
+                                                current_pool_ids = [
+                                                    cid
+                                                    for cid in current_pool_ids
+                                                    if cid != jack_id
+                                                ]
+                    except Exception:
+                        pass
+
                 dealt_map = _deal_unknown_with_suit_constraints(
                     rng=rng,
-                    pool_ids=pool_ids,
+                    pool_ids=current_pool_ids,
                     seats_to_fill=seats_to_fill,
-                    hand_sizes=need_sizes,
+                    hand_sizes=current_need_sizes,
                     suit_matrix=suit_matrix,
                 )
                 if dealt_map is not None:
+                    sim_player_trump = current_sim_player_trump
+                    sim_trump_suit = current_sim_trump_suit
+                    hands = current_hands
+                    need_sizes = current_need_sizes
+                    pool_ids = current_pool_ids
                     break
+
+        if dealt_map is None and trump_sample_constrained and not trumpReveal and bot_seat != bidder_seat:
+            sampled = rng.choice(base_pool_ids)
+            sim_player_trump = from_card_id(sampled)
+            sim_trump_suit = sim_player_trump.suit
+            pool_ids = [cid for cid in base_pool_ids if cid != sampled]
+            rng.shuffle(pool_ids)
+            hands = [[], [], [], []]
+            hands[bot_seat] = bot_hand[:]
+            need_sizes = list(hand_sizes)
+
+            try:
+                if len(s_card_ids) >= 1 and currentSuit:
+                    led_suit = currentSuit
+                    if all(_card_suit_from_id(cid) == led_suit for cid in s_card_ids):
+                        prior_played = [cid for cid in played_set if cid not in s_set]
+                        if all(_card_suit_from_id(cid) != led_suit for cid in prior_played):
+                            jack_id = f"{led_suit}_Jack"
+                            if jack_id in pool_ids:
+                                actor = (leaderIndex + len(s_card_ids)) % 4
+                                if actor == bot_seat:
+                                    remaining_after_actor = [
+                                        (leaderIndex + i) % 4
+                                        for i in range(len(s_card_ids) + 1, 4)
+                                    ]
+
+                                    row = SUIT_MATRIX_INDEX.get(led_suit)
+                                    candidates: list[int] = []
+                                    for seat in remaining_after_actor:
+                                        if need_sizes[seat] <= 0:
+                                            continue
+                                        if row is not None and suit_matrix[row][seat] == 0:
+                                            continue
+                                        candidates.append(seat)
+
+                                    if candidates:
+                                        target = rng.choice(candidates)
+                                        hands[target].append(from_card_id(jack_id))
+                                        need_sizes[target] -= 1
+                                        if need_sizes[target] < 0:
+                                            need_sizes[target] = 0
+                                        pool_ids = [cid for cid in pool_ids if cid != jack_id]
+            except Exception:
+                pass
+
+            if max_deal_retries > 0:
+                for _attempt in range(max_deal_retries):
+                    rng.shuffle(pool_ids)
+                    dealt_map = _deal_unknown_with_suit_constraints(
+                        rng=rng,
+                        pool_ids=pool_ids,
+                        seats_to_fill=seats_to_fill,
+                        hand_sizes=need_sizes,
+                        suit_matrix=suit_matrix,
+                    )
+                    if dealt_map is not None:
+                        break
 
         if dealt_map is not None:
             for seat in seats_to_fill:
@@ -677,6 +855,7 @@ def _build_snapshot(state, bot_seat: int) -> dict[str, Any]:
         "concealedTrumpCardId": concealed_id,
         # NEW: suit knowledge matrix for constraint-aware dealing
         "suitMatrix": state.suit_matrix,
+        "trumpMatrix": state.trump_matrix,
     }
 
     return snap

@@ -35,6 +35,11 @@ def _default_suit_matrix() -> list[list[int]]:
     return [[1, 1, 1, 1] for _ in range(4)]
 
 
+def _default_trump_matrix() -> list[list[int]]:
+    # 4 suits x 4 seats, all initially possible concealed-trump suits
+    return [[1, 1, 1, 1] for _ in range(4)]
+
+
 @dataclass
 class GameState:
     game_id: str
@@ -78,6 +83,9 @@ class GameState:
     # NEW: Suit void knowledge (persistent during PLAY; void stays void)
     # Rows: Hearts, Diamonds, Spades, Clubs; Cols: seat 0..3
     suit_matrix: list[list[int]] = field(default_factory=_default_suit_matrix)
+    # Concealed trump-suit knowledge before reveal.
+    # Rows: Hearts, Diamonds, Spades, Clubs; Cols: seat 0..3
+    trump_matrix: list[list[int]] = field(default_factory=_default_trump_matrix)
 
     # --- PLAY STATE (initialized when entering PLAY) ---
     seat_types: list[str] = field(
@@ -145,6 +153,12 @@ class GameState:
             "Spades": self.suit_matrix[2],
             "Clubs": self.suit_matrix[3],
         }
+        trump_knowledge = {
+            "Hearts": self.trump_matrix[0],
+            "Diamonds": self.trump_matrix[1],
+            "Spades": self.trump_matrix[2],
+            "Clubs": self.trump_matrix[3],
+        }
 
         return {
             "gameId": self.game_id,
@@ -177,6 +191,8 @@ class GameState:
             # Debug-friendly exposure of suit knowledge
             "suitKnowledge": suit_knowledge,
             "suitMatrix": self.suit_matrix,
+            "trumpKnowledge": trump_knowledge,
+            "trumpMatrix": self.trump_matrix,
             "play": {
                 "leaderIndex": self.leaderIndex,
                 "catchNumber": self.catchNumber,

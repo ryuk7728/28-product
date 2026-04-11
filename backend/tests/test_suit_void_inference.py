@@ -88,4 +88,47 @@ def test_leader_play_does_not_mark_void() -> None:
     assert state.suit_matrix == before
 
 
+def _make_trump_inference_state(*, starting_bidder_index: int = 2) -> GameState:
+    state = GameState(
+        game_id="test-trump",
+        phase="PLAY",
+        starting_bidder_index=starting_bidder_index,
+        bidding_order=[0, 1, 2, 3],
+        players_cards=[
+            [from_card_id("Clubs_Seven")],
+            [from_card_id("Hearts_Ace")],
+            [
+                from_card_id("Spades_Ace"),
+                from_card_id("Diamonds_Ace"),
+            ],
+            [from_card_id("Clubs_Ace")],
+        ],
+        draw_pile=[],
+        event_log=[],
+    )
+    state.final_bidder_seat = 2
+    state.final_bid_value = 14
+    state.player_trump = from_card_id("Clubs_Jack")
+    init_play_state(state)
+    return state
+
+
+def test_bidder_lead_marks_spade_impossible_for_concealed_trump() -> None:
+    state = _make_trump_inference_state(starting_bidder_index=2)
+
+    apply_play_card(state, seat_index=2, card_id="Spades_Ace")
+
+    spades_row = SUIT_MATRIX_INDEX["Spades"]
+    assert state.trump_matrix[spades_row][2] == 0
+
+
+def test_non_bidder_lead_does_not_mark_concealed_trump_matrix() -> None:
+    state = _make_trump_inference_state(starting_bidder_index=1)
+    before = [row[:] for row in state.trump_matrix]
+
+    apply_play_card(state, seat_index=1, card_id="Hearts_Ace")
+
+    assert state.trump_matrix == before
+
+
 

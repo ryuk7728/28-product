@@ -50,6 +50,41 @@ def _infer_void_if_failed_follow(
         state.event_log.append(f"Inferred: P{seat_index+1} is void in {led_suit}.")
 
 
+def _infer_bidder_non_trump_lead(
+    state,
+    *,
+    seat_index: int,
+    pre_trick_len: int,
+    played_suit: str,
+) -> None:
+    """
+    Pre-reveal concealed-trump inference:
+    if the bidder leads a trick with a non-trump suit, that led suit cannot be the
+    concealed trump suit. We only apply this on trick lead, for the bidder, before
+    reveal. If the bidder was forced to lead actual trump, we skip the inference.
+    """
+    if pre_trick_len != 0:
+        return
+    if state.trumpReveal:
+        return
+    if state.final_bidder_seat is None or seat_index != state.final_bidder_seat:
+        return
+    if not state.trumpSuit:
+        return
+    if played_suit == state.trumpSuit:
+        return
+
+    row = SUIT_MATRIX_INDEX.get(played_suit)
+    if row is None:
+        return
+
+    if state.trump_matrix[row][seat_index] != 0:
+        state.trump_matrix[row][seat_index] = 0
+        state.event_log.append(
+            f"Inferred: P{seat_index+1}'s concealed trump is not {played_suit}."
+        )
+
+
 def init_play_state(state) -> None:
     if state.final_bidder_seat is None or state.final_bid_value is None:
         raise RuntimeError("final bidder not set; cannot init play state")
@@ -80,6 +115,7 @@ def init_play_state(state) -> None:
 
     # Reset suit knowledge at start of PLAY
     state.suit_matrix = [[1, 1, 1, 1] for _ in range(4)]
+    state.trump_matrix = [[1, 1, 1, 1] for _ in range(4)]
 
     state.play_players = []
     for i in range(4):
@@ -269,6 +305,12 @@ def apply_play_card(state, seat_index: int, card_id: str) -> None:
         seat_index=seat_index,
         pre_trick_len=pre_trick_len,
         led_suit=led_suit,
+        played_suit=card_obj.suit,
+    )
+    _infer_bidder_non_trump_lead(
+        state,
+        seat_index=seat_index,
+        pre_trick_len=pre_trick_len,
         played_suit=card_obj.suit,
     )
 

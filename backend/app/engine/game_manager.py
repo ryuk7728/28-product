@@ -233,6 +233,7 @@ class GameManager:
 
         # Fresh rematch should also reset suit-knowledge and game log context.
         state.suit_matrix = [[1, 1, 1, 1] for _ in range(4)]
+        state.trump_matrix = [[1, 1, 1, 1] for _ in range(4)]
         state.event_log = [
             "Game restarted (same room).",
             f"Starting bidder: P{starting_bidder_index + 1}",
