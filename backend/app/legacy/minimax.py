@@ -309,6 +309,20 @@ def removeCard(cards,card):
                 cards.remove(k)
                 break
 
+
+def _activate_trumps_in_current_trick(s, trumpSuit, trumpIndice):
+    """Activate every trump-suit card already played in the current trick."""
+    if len(trumpIndice) < len(s):
+        trumpIndice.extend([0] * (len(s) - len(trumpIndice)))
+
+    trump_played = False
+    for idx, card in enumerate(s):
+        is_trump = card.suit == trumpSuit
+        trumpIndice[idx] = 1 if is_trump else 0
+        trump_played = trump_played or is_trump
+
+    return trump_played
+
 #This function determines the change in state of the game when a particular action is taken
 # Now returns undo information as well
 def result(s,a,currentSuit,trumpReveal,chose,playerTrump,trumpPlayed,trumpIndice,players,trumpSuit,finalBid,playerChance):
@@ -321,6 +335,7 @@ def result(s,a,currentSuit,trumpReveal,chose,playerTrump,trumpPlayed,trumpIndice
         'prev_playerTrump': playerTrump,
         'prev_trumpPlayed': trumpPlayed,
         'prev_trumpIndice_state': None,  # Store (index, old_value)
+        'prev_trumpIndice_snapshot': None,
         'card_removed_from_player': None,
         'card_removed': None,
         'card_removed_index': None,  # Store the index where card was removed
@@ -376,6 +391,12 @@ def result(s,a,currentSuit,trumpReveal,chose,playerTrump,trumpPlayed,trumpIndice
              players[finalBid-1]['cards'].append(playerTrump)
              undo_info['trump_added_to_player'] = finalBid-1
 
+        if a:
+            undo_info['prev_trumpIndice_snapshot'] = trumpIndice[:]
+            trumpPlayed = _activate_trumps_in_current_trick(
+                s, trumpSuit, trumpIndice
+            )
+
         chose = True
         trumpReveal = a
         return currentSuit,s,trumpReveal,chose,playerTrump,trumpPlayed,trumpIndice,players,trumpSuit,finalBid,undo_info
@@ -417,6 +438,10 @@ def undo_result(s, undo_info, currentSuit, trumpReveal, chose, playerTrump, trum
         # Restore chose and trumpReveal
         chose = undo_info['prev_chose']
         trumpReveal = undo_info['prev_trumpReveal']
+        trumpPlayed = undo_info['prev_trumpPlayed']
+
+        if undo_info['prev_trumpIndice_snapshot'] is not None:
+            trumpIndice[:] = undo_info['prev_trumpIndice_snapshot']
     
     return currentSuit, trumpReveal, chose, playerTrump, trumpPlayed, trumpIndice
 

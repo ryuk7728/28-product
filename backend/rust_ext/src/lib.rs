@@ -99,6 +99,7 @@ struct UndoInfo {
     prev_player_trump: Option<Card>,
     prev_trump_played: bool,
     prev_trump_indice_state: Option<(usize, i32)>,
+    prev_trump_indice_snapshot: Option<Vec<i32>>,
     card_removed_from_player: Option<usize>,
     card_removed_index: Option<usize>,
     trump_added_to_player: Option<usize>,
@@ -241,6 +242,20 @@ fn remove_card_by_index(cards: &mut Vec<Card>, index: usize) -> Option<Card> {
     None
 }
 
+fn activate_trumps_in_current_trick(state: &mut GameState) {
+    if state.trump_indice.len() < state.s.len() {
+        state.trump_indice.resize(state.s.len(), 0);
+    }
+
+    let mut trump_played = false;
+    for idx in 0..state.s.len() {
+        let is_trump = state.s[idx].suit == state.trump_suit;
+        state.trump_indice[idx] = i32::from(is_trump);
+        trump_played |= is_trump;
+    }
+    state.trump_played = trump_played;
+}
+
 fn apply_result(state: &mut GameState, action: &Action) -> UndoInfo {
     let mut undo = UndoInfo {
         action_type: UndoActionType::Card,
@@ -250,6 +265,7 @@ fn apply_result(state: &mut GameState, action: &Action) -> UndoInfo {
         prev_player_trump: state.player_trump.clone(),
         prev_trump_played: state.trump_played,
         prev_trump_indice_state: None,
+        prev_trump_indice_snapshot: None,
         card_removed_from_player: None,
         card_removed_index: None,
         trump_added_to_player: None,
@@ -298,6 +314,9 @@ fn apply_result(state: &mut GameState, action: &Action) -> UndoInfo {
             undo.action_type = UndoActionType::RevealChoice;
 
             if *reveal_choice {
+                undo.prev_trump_indice_snapshot = Some(state.trump_indice.clone());
+                activate_trumps_in_current_trick(state);
+
                 if let Some(card) = &state.player_trump {
                     let bid_idx = state.final_bid.saturating_sub(1);
                     if bid_idx < state.players.len() {
@@ -352,6 +371,10 @@ fn undo_result(state: &mut GameState, undo: UndoInfo) {
             state.player_trump = undo.prev_player_trump;
             state.chose = undo.prev_chose;
             state.trump_reveal = undo.prev_trump_reveal;
+            state.trump_played = undo.prev_trump_played;
+            if let Some(snapshot) = undo.prev_trump_indice_snapshot {
+                state.trump_indice = snapshot;
+            }
         }
     }
 }
@@ -631,4 +654,104 @@ fn minimax_extended_core(input_json: &str) -> PyResult<String> {
 fn rl428_minimax_rust(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(minimax_extended_core, m)?)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn card(suit: &str, rank: &str, points: i32, order: i32) -> Card {
+        Card {
+            suit: suit.to_string(),
+            rank: rank.to_string(),
+            points,
+            order,
+            identity: format!("{rank} of {suit}"),
+        }
+    }
+
+    fn empty_players() -> Vec<PlayerState> {
+        (0..4)
+            .map(|seat| PlayerState {
+                cards: Vec::new(),
+                is_trump: seat == 3,
+                team: if seat % 2 == 0 { 1 } else { 2 },
+            })
+            .collect()
+    }
+
+    fn reveal_state(trick: Vec<Card>) -> GameState {
+        GameState {
+            s: trick,
+            trump_played: false,
+            trump_indice: vec![0, 0, 0, 0],
+            player_chance: 0,
+            players: empty_players(),
+            current_suit: "Hearts".to_string(),
+            trump_reveal: false,
+            trump_suit: "Clubs".to_string(),
+            chose: false,
+            final_bid: 4,
+            player_trump: Some(card("Clubs", "Ace", 1, 5)),
+        }
+    }
+
+    #[test]
+    fn reveal_activates_all_matching_cards_and_undo_restores_state() {
+        let mut state = reveal_state(vec![
+            card("Clubs", "Seven", 0, 0),
+            card("Hearts", "Ace", 1, 5),
+            card("Clubs", "Jack", 3, 7),
+        ]);
+
+        let undo = apply_result(&mut state, &Action::Reveal(true));
+
+        assert!(state.trump_reveal);
+        assert!(state.trump_played);
+        assert_eq!(state.trump_indice, vec![1, 0, 1, 0]);
+        assert_eq!(state.players[3].cards.len(), 1);
+
+        undo_result(&mut state, undo);
+
+        assert!(!state.trump_reveal);
+        assert!(!state.chose);
+        assert!(!state.trump_played);
+        assert_eq!(state.trump_indice, vec![0, 0, 0, 0]);
+        assert!(state.players[3].cards.is_empty());
+        assert_eq!(state.player_trump.as_ref().unwrap().identity, "Ace of Clubs");
+    }
+
+    #[test]
+    fn declining_reveal_does_not_activate_matching_cards() {
+        let mut state = reveal_state(vec![
+            card("Hearts", "Seven", 0, 0),
+            card("Clubs", "Jack", 3, 7),
+        ]);
+
+        let _undo = apply_result(&mut state, &Action::Reveal(false));
+
+        assert!(!state.trump_reveal);
+        assert!(!state.trump_played);
+        assert_eq!(state.trump_indice, vec![0, 0, 0, 0]);
+        assert!(state.players[3].cards.is_empty());
+    }
+
+    #[test]
+    fn stronger_pre_reveal_trump_beats_later_trump() {
+        let mut state = reveal_state(vec![
+            card("Hearts", "Seven", 0, 0),
+            card("Clubs", "Jack", 3, 7),
+        ]);
+        state.players[2].cards = vec![card("Clubs", "Seven", 0, 0)];
+        state.players[3].cards = vec![card("Hearts", "Jack", 3, 7)];
+
+        let _reveal_undo = apply_result(&mut state, &Action::Reveal(true));
+        let _third_card_undo = apply_result(&mut state, &Action::Card(0));
+        let _fourth_card_undo = apply_result(&mut state, &Action::Card(0));
+
+        assert_eq!(state.trump_indice, vec![0, 1, 1, 0]);
+        let (winner, signed_points) = checkwin_extended(&state).unwrap();
+        assert_eq!(winner, 1);
+        assert_eq!(signed_points, -6);
+    }
 }
