@@ -556,7 +556,7 @@ async def simulate_prepared_sample(
                 "team2_points": None,
                 "simulation_seconds": 0.0,
                 "decision_count": 0,
-                "decision_seconds_by_catch": {},
+                "decision_seconds_by_catch": [],
                 "peak_memory_bytes": _peak_memory_bytes(),
                 "minimax_backend": str(backend_info["active"]),
                 "minimax_invoked": False,
