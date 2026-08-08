@@ -80,7 +80,7 @@ class GcsShardStore:
             "result_count": str(len(rows)),
         }
         try:
-            blob.upload_from_string(payload, if_generation_match=0)
+            blob.upload_from_string(payload, content_type="application/x-ndjson", if_generation_match=0)
             disposition = "created"
         except PreconditionFailed:
             blob.reload(client=self.client)
