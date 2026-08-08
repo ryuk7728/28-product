@@ -39,6 +39,7 @@ RUN pip install --no-cache-dir /tmp/rust_wheels/rl428_minimax_rust-*.whl \
 
 # Copy application code
 COPY backend/app /app/app
+COPY backend/experiments /app/experiments
 
 EXPOSE 8000
 

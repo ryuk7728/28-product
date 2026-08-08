@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import traceback
 from pathlib import Path
 import asyncio
@@ -100,6 +101,11 @@ def _full_deck_card_ids() -> list[str]:
 def _seed_entropy() -> int:
     # Non-deterministic seed with high diversity across workers
     return int.from_bytes(os.urandom(8), "little") ^ os.getpid() ^ time.time_ns()
+
+
+def _deterministic_batch_seed(seed_base: int, batch_index: int) -> int:
+    payload = f"{seed_base}:{batch_index}".encode("utf-8")
+    return int.from_bytes(hashlib.sha256(payload).digest()[:8], "big")
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -248,6 +254,9 @@ def rollout_worker(snapshot: dict[str, Any], n: int, seed: int) -> dict[Any, int
       - card_identity_string -> count
     This function MUST be top-level for Windows spawn pickling.
     """
+    if bool(snapshot.get("strictRust")):
+        legacy_minimax.enable_strict_rust_mode()
+
     rng = random.Random(seed)
 
     bot_seat: int = snapshot["botSeat"]
@@ -896,6 +905,9 @@ async def choose_action_with_rollouts_parallel(
     state,
     bot_seat: int,
     pool: ProcessPoolExecutor,
+    *,
+    rollout_seed_base: int | None = None,
+    strict: bool = False,
 ) -> tuple[str, dict]:
     """
     Returns:
@@ -915,6 +927,12 @@ async def choose_action_with_rollouts_parallel(
     timeout_enabled = timeout_seconds > 0.0
 
     snapshot = _build_snapshot(state, bot_seat)
+    snapshot["strictRust"] = bool(strict)
+
+    def seed_for_batch(batch_index: int) -> int:
+        if rollout_seed_base is None:
+            return _seed_entropy()
+        return _deterministic_batch_seed(rollout_seed_base, batch_index)
 
     batch_sizes = _build_rollout_batch_sizes(
         total_rollouts=total_rollouts,
@@ -931,8 +949,8 @@ async def choose_action_with_rollouts_parallel(
             ray, remote_fn = _get_ray_rollout_remote()
             if not timeout_enabled:
                 refs = []
-                for n in batch_sizes:
-                    seed = _seed_entropy()
+                for batch_index, n in enumerate(batch_sizes):
+                    seed = seed_for_batch(batch_index)
                     refs.append(remote_fn.remote(snapshot, n, seed))
                 results = await asyncio.to_thread(ray.get, refs)
                 completed_rollouts = sum(batch_sizes)
@@ -947,9 +965,10 @@ async def choose_action_with_rollouts_parallel(
                     nonlocal next_batch_idx
                     if next_batch_idx >= len(batch_sizes):
                         return False
-                    n = batch_sizes[next_batch_idx]
+                    batch_index = next_batch_idx
+                    n = batch_sizes[batch_index]
                     next_batch_idx += 1
-                    seed = _seed_entropy()
+                    seed = seed_for_batch(batch_index)
                     ref = remote_fn.remote(snapshot, n, seed)
                     in_flight[ref] = n
                     return True
@@ -988,8 +1007,8 @@ async def choose_action_with_rollouts_parallel(
             loop = asyncio.get_running_loop()
             if not timeout_enabled:
                 tasks = []
-                for n in batch_sizes:
-                    seed = _seed_entropy()
+                for batch_index, n in enumerate(batch_sizes):
+                    seed = seed_for_batch(batch_index)
                     fut = pool.submit(rollout_worker, snapshot, n, seed)
                     tasks.append(asyncio.wrap_future(fut, loop=loop))
                 results = await asyncio.gather(*tasks)
@@ -1005,9 +1024,10 @@ async def choose_action_with_rollouts_parallel(
                     nonlocal next_batch_idx
                     if next_batch_idx >= len(batch_sizes):
                         return False
-                    n = batch_sizes[next_batch_idx]
+                    batch_index = next_batch_idx
+                    n = batch_sizes[batch_index]
                     next_batch_idx += 1
-                    seed = _seed_entropy()
+                    seed = seed_for_batch(batch_index)
                     cfut = pool.submit(rollout_worker, snapshot, n, seed)
                     afut = asyncio.wrap_future(cfut, loop=loop)
                     in_flight[afut] = (cfut, n)
@@ -1043,6 +1063,9 @@ async def choose_action_with_rollouts_parallel(
                     except Exception:
                         pass
     except Exception as e:
+        if strict:
+            raise RuntimeError("Strict rollout execution failed.") from e
+
         msg = str(e)
         if "ROLL_OUT_CRASH_DUMP=" in msg:
             dump_path = msg.split("ROLL_OUT_CRASH_DUMP=", 1)[1].strip()

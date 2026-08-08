@@ -19,12 +19,85 @@ _MINIMAX_BACKEND_REQUESTED = (
     os.getenv("APP_MINIMAX_BACKEND")
     or os.getenv("RL428_MINIMAX_BACKEND", "auto")
 ).strip().lower()
+_STRICT_RUST_MINIMAX = os.getenv("APP_MINIMAX_STRICT_RUST", "").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+    "y",
+    "on",
+)
 if _MINIMAX_BACKEND_REQUESTED in ("python", "py"):
     _MINIMAX_BACKEND_ACTIVE = "python"
 elif _MINIMAX_BACKEND_REQUESTED == "rust":
     _MINIMAX_BACKEND_ACTIVE = "rust" if _RUST_MINIMAX_AVAILABLE else "rust_unavailable"
 else:
     _MINIMAX_BACKEND_ACTIVE = "rust" if _RUST_MINIMAX_AVAILABLE else "python"
+
+
+def enable_strict_rust_mode() -> None:
+    """Require every minimax call to execute through the Rust extension."""
+    global _STRICT_RUST_MINIMAX
+
+    if _MINIMAX_BACKEND_REQUESTED != "rust":
+        raise RuntimeError(
+            "Strict Rust mode requires APP_MINIMAX_BACKEND=rust before Python starts."
+        )
+    if not _RUST_MINIMAX_AVAILABLE:
+        raise RuntimeError(
+            "Strict Rust mode requested, but rl428_minimax_rust is not available."
+        )
+    _STRICT_RUST_MINIMAX = True
+
+
+def minimax_backend_info() -> dict[str, object]:
+    return {
+        "requested": _MINIMAX_BACKEND_REQUESTED,
+        "active": _MINIMAX_BACKEND_ACTIVE,
+        "rustAvailable": _RUST_MINIMAX_AVAILABLE,
+        "strictRust": _STRICT_RUST_MINIMAX,
+    }
+
+
+def strict_rust_smoke_test() -> dict[str, object]:
+    """Execute the installed Rust core once; imports alone are not sufficient."""
+    enable_strict_rust_mode()
+    payload = {
+        "s": [],
+        "first": True,
+        "secondary": True,
+        "trumpPlayed": False,
+        "trumpIndice": [0, 0, 0, 0],
+        "playerChance": 0,
+        "players": [
+            {
+                "cards": [],
+                "isTrump": seat == 0,
+                "team": 1 if seat % 2 == 0 else 2,
+            }
+            for seat in range(4)
+        ],
+        "currentSuit": "",
+        "trumpReveal": False,
+        "trumpSuit": "Clubs",
+        "chose": False,
+        "finalBid": 1,
+        "playerTrump": None,
+        "total": 0,
+        "num": 0,
+        "k": 1,
+        "alpha": None,
+        "beta": None,
+    }
+    try:
+        raw = _rl428_minimax_rust.minimax_extended_core(
+            json.dumps(payload, separators=(",", ":"))
+        )
+        parsed = json.loads(raw)
+    except Exception as exc:
+        raise RuntimeError("Strict Rust startup smoke test failed.") from exc
+    if not isinstance(parsed, dict) or not isinstance(parsed.get("value"), int):
+        raise RuntimeError("Strict Rust startup smoke test returned an invalid payload.")
+    return {**minimax_backend_info(), "smokeValue": parsed["value"]}
 
 #Checks if all the cards is from the suit specified
 def allTrump(cards,suit):
@@ -873,7 +946,9 @@ def minimax_extended(s,first,secondary,trumpPlayed,currentCatch,trumpIndice,play
                 reward_distribution.append((entry.get("action"), int(entry.get("value", 0))))
 
         return int(parsed["value"])
-    except Exception:
+    except Exception as exc:
+        if _STRICT_RUST_MINIMAX:
+            raise RuntimeError("Strict Rust minimax execution failed.") from exc
         return _minimax_extended_python(s,first,secondary,trumpPlayed,currentCatch,trumpIndice,playerChance,players,currentSuit,trumpReveal,trumpSuit,chose,finalBid,playerTrump,reveal,reward_distribution,total,num,k,alpha,beta)
 
 

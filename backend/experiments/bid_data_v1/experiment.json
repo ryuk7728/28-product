@@ -1,0 +1,215 @@
+{
+  "schema_version": "1.0.0",
+  "experiment_id": "bid-data-v1",
+  "status": "phase-1-locked",
+  "objective": "Collect reproducible self-play outcomes for estimating bidder-team points conditional on the bidder's canonical first-four-card key.",
+  "non_goals": [
+    "Learn or replace the trump-selection heuristic",
+    "Choose the final bid estimator",
+    "Simulate the numerical auction",
+    "Persist UI or WebSocket self-play traces by default"
+  ],
+  "population": {
+    "deck_size": 32,
+    "first_four_physical_hand_count": 35960,
+    "canonical_key_count": 2262,
+    "zero_point_canonical_key_count": 133,
+    "samples_per_key": 100,
+    "requested_sample_slot_count": 226200,
+    "deterministic_opening_redeal_slot_count": 3325,
+    "deterministic_target_four_jacks_abort_slot_count": 100,
+    "planned_play_sample_count": 222775,
+    "canonicalizer": "app.engine.canonical_key.build_canonical_key_and_mapping",
+    "catalog_order": "canonical-key compact JSON in ascending UTF-8 lexical order"
+  },
+  "sampling": {
+    "method": "direct-conditional",
+    "target_seat": 0,
+    "bid_position_values": [1, 2, 3, 4],
+    "bid_position_assignment": "1 + (sample_index mod 4)",
+    "samples_per_bid_position_per_key": 25,
+    "starting_bidder_seat": "(target_seat - (bid_position - 1)) mod 4",
+    "physical_hand_selection": "Uniform over all physical four-card hands that map to the requested canonical key.",
+    "remaining_deck_selection": "Uniform Fisher-Yates shuffle of the other 28 cards, followed by the normal first-four/rest-four seat allocation.",
+    "rng": {
+      "algorithm": "CPython random.Random MT19937 with randbelow-based choice and shuffle",
+      "seed_derivation": "deal_id interpreted as an unsigned integer; named substreams use length-prefixed SHA-256(deal_seed, stream_name, stream_index)",
+      "root_seed": "Set once in the production run manifest",
+      "bot_randomness": "Derive independent deterministic streams from deal_id, decision_index and rollout_index"
+    },
+    "identity": {
+      "canonical_key_id": "SHA-256(compact canonical-key JSON)",
+      "hash_composition": "Each variable-length identity component is prefixed by its unsigned 8-byte big-endian UTF-8 length before SHA-256 hashing.",
+      "deal_id": "length-prefixed SHA-256(experiment_id, root_seed, canonical_key_id, sample_index)",
+      "result_id": "length-prefixed SHA-256(deal_id, policy_id, rules_version, engine_build_id)"
+    }
+  },
+  "game": {
+    "target_role": "forced final bidder for data-generation play samples",
+    "auction": "skipped",
+    "numerical_bid": null,
+    "first_trick_leader": "starting_bidder_seat",
+    "trump_selection": {
+      "policy": "app.bots.bidding_bot.plan_bid_and_trump_from_first4",
+      "optimization_scope": "frozen heuristic; not a learned target in this experiment"
+    },
+    "score_target": "bidder_team_points",
+    "winner_target": null,
+    "rules_baseline_commit": "7c91e06",
+    "required_rules": [
+      "Retroactive trump activation follows commit 7c91e06.",
+      "An opening bidder with zero first-four card points always chooses redeal.",
+      "A full deal aborts if one player holds all four Jacks.",
+      "A full deal aborts if the bidder's team holds all eight cards of the selected trump suit."
+    ]
+  },
+  "redeal_and_abort": {
+    "opening_zero_point": {
+      "condition": "bid_position == 1 and sum(first-four card points) == 0",
+      "outcome": "REDEAL",
+      "simulation": "Do not play the hand.",
+      "storage": "Store one deterministic row per requested sample slot so shard accounting remains exact; these rows are rule classifications, not played samples."
+    },
+    "later_position_zero_point": {
+      "condition": "bid_position in [2, 3, 4] and sum(first-four card points) == 0",
+      "outcome": "PLAY_SAMPLE",
+      "rationale": "The family redeal rule applies only to the opening bidder; later positions remain distinct conditional strata."
+    },
+    "full_deal_abort": {
+      "reasons": ["ALL_FOUR_JACKS", "ALL_TRUMPS_ONE_SIDE"],
+      "behavior": "Record attempt count and reasons, then resample the remaining 28 cards deterministically until the sample slot completes.",
+      "max_attempts_per_sample": 100,
+      "exhausted_outcome": "FAILED_ABORT_RETRY_LIMIT"
+    },
+    "target_first4_all_jacks": {
+      "condition": "The target first four cards are the four Jacks.",
+      "outcome": "ABORT",
+      "simulation": "Do not retry the remaining deck because every completion still leaves all four Jacks in one hand.",
+      "storage": "Store one deterministic row per requested sample slot for exact reconciliation; do not run gameplay."
+    }
+  },
+  "search": {
+    "rollouts_per_decision": 500,
+    "backend": "rust",
+    "rust_fail_closed": true,
+    "cloud_workers_per_task": 8,
+    "policies": {
+      "baseline": {
+        "policy_id": "k-baseline-33444321-r500",
+        "k_by_catch_1_to_8": [3, 3, 4, 4, 4, 3, 2, 1]
+      },
+      "option_a": {
+        "policy_id": "k-option-a-22334321-r500",
+        "k_by_catch_1_to_8": [2, 2, 3, 3, 4, 3, 2, 1]
+      }
+    },
+    "selection_rule": "Use baseline if its 100-game stratified GCP pilot has p95 game simulation time <= 30 seconds and acceptable correctness/reliability. Otherwise compare Option A on the identical deal IDs. Do not reduce rollouts automatically."
+  },
+  "performance": {
+    "timed_region": "Headless simulation only; exclude container startup, persistence and orchestration.",
+    "primary_gate": {
+      "metric": "p95_game_simulation_seconds",
+      "operator": "<=",
+      "value": 30
+    },
+    "reported_metrics": [
+      "p50_game_simulation_seconds",
+      "p95_game_simulation_seconds",
+      "max_game_simulation_seconds",
+      "decision_seconds_by_catch",
+      "container_startup_seconds",
+      "peak_memory_bytes",
+      "vCPU_seconds_per_completed_sample",
+      "gross_cost_per_completed_sample",
+      "failure_rate"
+    ]
+  },
+  "execution": {
+    "platform": "Google Cloud Run Jobs",
+    "region": "us-central1",
+    "cpu_per_task": 8,
+    "initial_memory_gib_per_task": 16,
+    "pilot_task_retries": 0,
+    "production_task_retries": 1,
+    "production_layout": "Four indexed 25-sample tasks per canonical key (9,048 tasks total); CLOUD_RUN_TASK_INDEX deterministically selects key and sample range.",
+    "parallelism_ramp": [10, 25, 50, 100],
+    "stop_flag_check": "Before starting each sample slot and after persisting each result."
+  },
+  "persistence": {
+    "raw_store": "Google Cloud Storage",
+    "raw_format": "immutable compressed NDJSON shards",
+    "analytics_store": "BigQuery",
+    "progress_control_store": "Firestore only if needed for the shared stop/progress document",
+    "write_contract": "Write an immutable task shard to a temporary object, verify it, then publish under a deterministic object name. BigQuery ingestion deduplicates by result_id.",
+    "full_trace_policy": {
+      "failures": true,
+      "deterministic_debug_fraction": 0.001,
+      "ordinary_samples": false
+    }
+  },
+  "result_schema": {
+    "required_identity_fields": [
+      "experiment_id",
+      "schema_version",
+      "run_id",
+      "policy_id",
+      "canonical_key_id",
+      "deal_id",
+      "result_id",
+      "sample_index"
+    ],
+    "required_input_fields": [
+      "canonical_key",
+      "physical_first4_card_ids",
+      "root_seed",
+      "deal_seed",
+      "target_seat",
+      "bid_position",
+      "starting_bidder_seat",
+      "selected_trump_card_id",
+      "selected_trump_suit"
+    ],
+    "required_outcome_fields": [
+      "status",
+      "bidder_team_points",
+      "team1_points",
+      "team2_points",
+      "full_deal_attempt_count",
+      "abort_reason_counts"
+    ],
+    "required_provenance_fields": [
+      "git_commit",
+      "rules_version",
+      "engine_build_id",
+      "container_image_digest",
+      "minimax_backend",
+      "rust_extension_version",
+      "rollouts_per_decision",
+      "k_by_catch_1_to_8",
+      "worker_count"
+    ],
+    "required_timing_fields": [
+      "simulation_seconds",
+      "decision_count",
+      "decision_seconds_by_catch",
+      "peak_memory_bytes"
+    ]
+  },
+  "budget": {
+    "measurement": "gross usage before credits",
+    "currency": "INR",
+    "notification_thresholds_inr": [8000, 12000],
+    "operational_stop_inr": 14000,
+    "hard_planning_ceiling_inr": 16000,
+    "enforcement": "Launch bounded waves; at the operational stop set STOP_REQUESTED and cancel the active Cloud Run Job execution. Billing-budget notifications alone are not treated as a hard real-time cap."
+  },
+  "phase_gates": {
+    "phase_2": "Headless deterministic conditional runner implemented.",
+    "phase_3": "Focused correctness, determinism, Rust enforcement and idempotence tests pass.",
+    "phase_4": "Dedicated guarded GCP project provisioned with user-controlled authentication.",
+    "phase_5": "One Rust-backed GCP sample completes and persists correctly.",
+    "phase_6": "Production K policy selected from paired pilots.",
+    "phase_7": "Representative full-key rehearsal passes reconciliation and stop-control tests.",
+    "phase_8": "Production collection reconciled and frozen for analysis."
+  }
+}
