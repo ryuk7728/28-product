@@ -10,3 +10,6 @@ backend/data/self_play_results.jsonl
 meta/
 DEPLOY_PROFILE_1.md
 backend/rust_ext/target
+
+.vercel
+.env*

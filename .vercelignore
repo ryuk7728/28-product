@@ -1,0 +1,11 @@
+# The linked Vercel project builds only the frontend/ root directory.
+backend/
+meta/
+.git/
+.github/
+.vscode/
+.pytest_cache/
+frontend/node_modules/
+frontend/dist/
+**/__pycache__/
+**/*.pyc
