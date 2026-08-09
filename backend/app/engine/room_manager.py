@@ -6,6 +6,7 @@ import string
 import threading
 import time
 
+from app.bots.bid_policy import BidPolicyConfig
 from app.engine.game_manager import game_manager
 from app.settings import settings
 
@@ -35,6 +36,7 @@ class Room:
     code: str
     created_at: float
     starting_bidder_index: int
+    bot_bidding_policy: BidPolicyConfig = field(default_factory=BidPolicyConfig.aggressive)
     game_id: str | None = None
     seat_tokens: dict[int, str] = field(default_factory=dict)
     seat_names: dict[int, str] = field(default_factory=dict)
@@ -120,7 +122,8 @@ class RoomManager:
         if room.players_joined < len(HUMAN_ROOM_SEATS):
             return
         state = game_manager.create_game_auto_deal(
-            starting_bidder_index=room.starting_bidder_index
+            starting_bidder_index=room.starting_bidder_index,
+            bot_bidding_policy=room.bot_bidding_policy,
         )
         state.player_names = [
             "T-1000",
@@ -131,14 +134,25 @@ class RoomManager:
         room.game_id = state.game_id
         room.rematch_ready_seats.clear()
 
-    def create_room(self, *, player_name: str) -> RoomAssignment:
+    def create_room(
+        self,
+        *,
+        player_name: str,
+        starting_bidder_index: int | None = None,
+        bot_bidding_policy: BidPolicyConfig | None = None,
+    ) -> RoomAssignment:
         with self._lock:
             self._cleanup_expired_locked()
             code = self._generate_code_locked()
             room = Room(
                 code=code,
                 created_at=time.time(),
-                starting_bidder_index=secrets.randbelow(4),
+                starting_bidder_index=(
+                    secrets.randbelow(4)
+                    if starting_bidder_index is None
+                    else starting_bidder_index
+                ),
+                bot_bidding_policy=bot_bidding_policy or BidPolicyConfig.aggressive(),
             )
             seat_index = HUMAN_ROOM_SEATS[0]
             player_token = secrets.token_urlsafe(24)
@@ -218,6 +232,7 @@ class RoomManager:
                 "seatName": room.seat_names.get(seat_index) if seat_index is not None else None,
                 "waitingForPlayer": room.waiting_for_player,
                 "playersJoined": room.players_joined,
+                "biddingPolicy": room.bot_bidding_policy.to_public_dict(),
             }
 
     def validate_player(self, *, room_code: str, player_token: str) -> tuple[Room, int]:

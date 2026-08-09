@@ -106,7 +106,7 @@ def test_ws_bot_auto_redeal_when_starting_bidder_has_zero_points(monkeypatch) ->
 
         # Make redeal deterministic so the test is stable.
         #
-        # After redeal, we want seat0 to have a hand that bids 16 by your rules:
+        # After redeal, seat0 receives a known hand whose empirical opening bid is 15:
         # seat0: Spades_Jack, Spades_Nine, Spades_Seven, Hearts_Ace
         fixed_first16 = (
             ["Spades_Jack", "Spades_Nine", "Spades_Seven", "Hearts_Ace"]
@@ -140,8 +140,8 @@ def test_ws_bot_auto_redeal_when_starting_bidder_has_zero_points(monkeypatch) ->
             assert "requested redeal" in log
             assert "redeal performed" in log
 
-            # Confirm bot bid occurred after redeal (should be 16 for our fixed deal)
-            assert state["bidsR1"][0] == 16
+            # Confirm the bot used the pooled empirical policy after the redeal.
+            assert state["bidsR1"][0] == 15
 
             # Confirm seat0's current hand is the redealt one (4 cards at this stage)
             seat0_cards = _card_ids_for_seat(state, 0)

@@ -5,6 +5,8 @@ frontend/.env
 __pycache__/
 *.pyc
 backend/rollout_crash_dumps
+backend/data/gcp_snapshots/
+backend/data/self_play_results.jsonl
 meta/
 DEPLOY_PROFILE_1.md
 backend/rust_ext/target

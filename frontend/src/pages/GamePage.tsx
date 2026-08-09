@@ -115,6 +115,7 @@ export interface GamePageProps {
   playerSeatIndex?: number;
   controlledSeatIndices?: number[];
   spectateMode?: boolean;
+  selfPlayMode?: boolean;
   onGameEnd?: () => void;
 }
 
@@ -125,6 +126,7 @@ export const GamePage: React.FC<GamePageProps> = ({
   playerSeatIndex = 1,
   controlledSeatIndices,
   spectateMode = false,
+  selfPlayMode = false,
   onGameEnd,
 }) => {
   const [selectedCard, setSelectedCard] = useState<string | null>(null);
@@ -162,6 +164,7 @@ export const GamePage: React.FC<GamePageProps> = ({
     roomCode,
     playerToken,
     spectateMode,
+    selfPlayMode,
     onError: () => {},
     onGameAborted: (reason) => {
       setAbortReason(reason);
@@ -582,7 +585,7 @@ export const GamePage: React.FC<GamePageProps> = ({
     if (!gameState) return [];
 
     return [0, 1, 2, 3].map((seatIndex) => {
-      const isBot = BOT_SEATS.has(seatIndex);
+      const isBot = selfPlayMode || BOT_SEATS.has(seatIndex);
       const isLocalSeat = controlledSeatSet.has(seatIndex);
       const renderSeatIndex = mapSeatToRenderSeat(seatIndex);
       const isHorizontal = renderSeatIndex === 1 || renderSeatIndex === 3;
@@ -622,7 +625,7 @@ export const GamePage: React.FC<GamePageProps> = ({
         handContent: (
           <PlayerHand
             cards={cards}
-            faceUp={spectateMode || isLocalSeat || (isBot && showBotCards)}
+            faceUp={selfPlayMode || spectateMode || isLocalSeat || (isBot && showBotCards)}
             isHorizontal={isHorizontal}
             isCompact={renderSeatIndex !== 1}
             noOverlap={isLocalSeat}
@@ -654,6 +657,7 @@ export const GamePage: React.FC<GamePageProps> = ({
     handleCardClick,
     spectateMode,
     showBotCards,
+    selfPlayMode,
   ]);
 
   const renderCenterContent = () => {
@@ -827,6 +831,41 @@ export const GamePage: React.FC<GamePageProps> = ({
     if (phase !== "GAME_OVER" || !gameState?.play) return null;
 
     const winnerTeam = gameState.play.winnerTeam;
+    if (selfPlayMode) {
+      const bidderSeat = gameState.selfPlay?.bidderSeat;
+      const bidderTeam = gameState.selfPlay?.bidderTeam;
+      const bidderTeamPoints =
+        bidderTeam === 1 ? gameState.play.team1Points : gameState.play.team2Points;
+
+      return (
+        <div className="game-over-overlay">
+          <div className="game-over-modal">
+            <div className="result-title win">Self Play Complete</div>
+            <div className="result-details">
+              <div className="score-line">
+                <strong>Bidder:</strong>{" "}
+                {typeof bidderSeat === "number" ? getSeatDisplayName(bidderSeat) : "Unknown"}
+              </div>
+              <div className="score-line">
+                <strong>Canonical Key:</strong>{" "}
+                {JSON.stringify(gameState.selfPlay?.canonicalKey ?? [])}
+              </div>
+              <div className="score-line">
+                <strong>Bidder Team Points:</strong> {bidderTeamPoints}
+              </div>
+              <div className="score-line">
+                <strong>Stored:</strong>{" "}
+                {gameState.selfPlay?.resultLogged ? "Yes" : "Finishing..."}
+              </div>
+            </div>
+            <button className="new-game-btn" onClick={handleNewGame}>
+              New Self Play Game
+            </button>
+          </div>
+        </div>
+      );
+    }
+
     const didWin = winnerTeam === 2;
     const isRoomRematchFlow = Boolean(roomCode) && Boolean(playerToken) && !spectateMode;
     const localSeat = effectiveControlledSeats[0] ?? playerSeatIndex;

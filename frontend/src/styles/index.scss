@@ -33,3 +33,36 @@ body {
 @import "./panels.scss";
 @import "./animations.scss";
 @import "./trick.scss";
+
+.self-play-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 24px;
+  background: radial-gradient(circle at center, #24723a 0%, #0d3f24 65%, #082816 100%);
+  color: white;
+}
+
+.self-play-panel {
+  width: min(520px, 100%);
+  padding: 28px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 8px;
+  background: rgba(5, 20, 12, 0.72);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
+}
+
+.self-play-actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 22px;
+}
+
+.self-play-error {
+  margin-top: 16px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: rgba(220, 38, 38, 0.2);
+  color: #fecaca;
+}

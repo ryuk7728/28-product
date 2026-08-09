@@ -51,7 +51,8 @@ def test_ws_bot_bid_r1_then_bot_selects_trump_then_bots_pass_r2() -> None:
                 lambda s, a: a.get("type") == "BID_R1" and a.get("seatIndex") == 1,
             )
             assert state["phase"] == "BIDDING_R1"
-            assert state["bidsR1"][0] == 16
+            # The pooled empirical policy opens this canonical hand at 15.
+            assert state["bidsR1"][0] == 15
 
             ws.send_json({"type": "SUBMIT_BID", "seatIndex": 1, "bidValue": 0})
 
@@ -68,7 +69,7 @@ def test_ws_bot_bid_r1_then_bot_selects_trump_then_bots_pass_r2() -> None:
             )
             assert state["phase"] == "MANUAL_DEAL_REST"
             assert state["finalBidderSeat"] == 0
-            assert state["finalBidValue"] == 16
+            assert state["finalBidValue"] == 15
             assert state["hasConcealedTrump"] is True
 
             seat0_cards = _card_ids_for_seat(state, 0)
@@ -99,3 +100,50 @@ def test_ws_bot_bid_r1_then_bot_selects_trump_then_bots_pass_r2() -> None:
                 lambda s, a: a.get("type") == "BID_R2" and a.get("seatIndex") == 3,
             )
             assert state["bidsR2"][2] == 0
+
+
+def test_ws_bot_uses_per_game_policy_and_actual_bid_position(monkeypatch) -> None:
+    observed: list[dict[str, Any]] = []
+
+    def fake_choose(_groups, **kwargs) -> int:
+        observed.append(kwargs)
+        return 14
+
+    monkeypatch.setattr("app.api.ws.choose_r1_bid_from_data", fake_choose)
+    first4_hands = [
+        ["Spades_Jack", "Spades_Nine", "Spades_Seven", "Hearts_Ace"],
+        ["Hearts_King", "Diamonds_Ace", "Clubs_Seven", "Clubs_Eight"],
+        ["Diamonds_Jack", "Diamonds_Nine", "Clubs_Ace", "Spades_Ace"],
+        ["Hearts_Seven", "Hearts_Eight", "Clubs_King", "Diamonds_Seven"],
+    ]
+    policy = {
+        "mode": "custom",
+        "positionAware": True,
+        "thresholds": {
+            "opening15": 64,
+            "opening16": 73,
+            "laterBid": 69,
+            "jumpTo16": 81,
+        },
+    }
+    with TestClient(app) as client:
+        response = client.post(
+            "/games",
+            json={
+                "startingBidderIndex": 0,
+                "first4Hands": first4_hands,
+                "biddingPolicy": policy,
+            },
+        )
+        assert response.status_code == 200
+        with client.websocket_connect(f"/ws/games/{response.json()['gameId']}") as socket:
+            state, _legal = _drain_until(
+                socket,
+                lambda _state, actions: actions.get("type") == "BID_R1"
+                and actions.get("seatIndex") == 1,
+            )
+    assert state["botBiddingPolicy"] == policy
+    assert len(observed) == 1
+    assert observed[0]["bid_position"] == 1
+    assert observed[0]["policy"].position_aware is True
+    assert observed[0]["policy"].thresholds.jump_to_16 == 81

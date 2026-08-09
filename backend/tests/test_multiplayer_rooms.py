@@ -84,6 +84,53 @@ def test_room_create_join_reconnect_flow() -> None:
         assert rejoin["gameId"] == joined["gameId"]
 
 
+def test_room_propagates_custom_position_aware_policy_to_game_state() -> None:
+    policy = {
+        "mode": "custom",
+        "positionAware": True,
+        "thresholds": {
+            "opening15": 64,
+            "opening16": 73,
+            "laterBid": 69,
+            "jumpTo16": 81,
+        },
+    }
+    with TestClient(app) as client:
+        created = client.post(
+            "/rooms",
+            json={
+                "startingBidderIndex": 2,
+                "playerName": "Alice",
+                "biddingPolicy": policy,
+            },
+        )
+        assert created.status_code == 200
+        room = created.json()
+        status = client.get(f"/rooms/{room['roomCode']}").json()
+        assert status["biddingPolicy"] == policy
+
+        joined = client.post(
+            "/rooms/join",
+            json={"roomCode": room["roomCode"], "playerName": "Bob"},
+        )
+        assert joined.status_code == 200
+        game = client.get(f"/games/{joined.json()['gameId']}").json()
+        assert game["startingBidderIndex"] == 2
+        assert game["botBiddingPolicy"] == policy
+
+
+def test_custom_policy_requires_thresholds() -> None:
+    with TestClient(app) as client:
+        response = client.post(
+            "/rooms",
+            json={
+                "playerName": "Alice",
+                "biddingPolicy": {"mode": "custom", "positionAware": False},
+            },
+        )
+        assert response.status_code == 422
+
+
 def test_ws_room_redacts_hands_and_enforces_seat_actions() -> None:
     with TestClient(app) as client:
         created = client.post(

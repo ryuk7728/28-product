@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal, Any, Final
 
+from app.bots.bid_policy import BidPolicyConfig
 from app.legacy.cards import Cards
 from app.settings import settings
 
@@ -124,6 +125,19 @@ class GameState:
 
     event_log: list[str] = field(default_factory=list)
 
+    # Immutable per-game empirical bidding experiment selected by the host.
+    bot_bidding_policy: BidPolicyConfig = field(default_factory=BidPolicyConfig.aggressive)
+
+    # Self-play data-generation metadata. These fields are unused in normal
+    # human/multiplayer games.
+    self_play: bool = False
+    self_play_result_logged: bool = False
+    self_play_bidder_seat: int | None = None
+    self_play_bidder_team: int | None = None
+    self_play_first4_card_ids: list[str] = field(default_factory=list)
+    self_play_canonical_key: list[list[str]] = field(default_factory=list)
+    self_play_selected_trump_card_id: str | None = None
+
     @property
     def turn_index(self) -> int:
         if self.phase == "BIDDING_R1":
@@ -182,6 +196,7 @@ class GameState:
             "drawPileCount": len(self.draw_pile),
             "autoDeal": self.auto_deal,
             "fixedDeckMode": self.fixed_deck_mode,
+            "botBiddingPolicy": self.bot_bidding_policy.to_public_dict(),
             "bidsR1": self.bids_r1_by_seat,
             "bidsR2": self.bids_r2_by_seat,
             "round1BidderSeat": self.round1_bidder_seat,
@@ -208,6 +223,15 @@ class GameState:
                 "winnerTeam": self.winnerTeam,
             },
             "eventLog": self.event_log,
+            "selfPlay": {
+                "enabled": self.self_play,
+                "resultLogged": self.self_play_result_logged,
+                "bidderSeat": self.self_play_bidder_seat,
+                "bidderTeam": self.self_play_bidder_team,
+                "first4CardIds": self.self_play_first4_card_ids,
+                "canonicalKey": self.self_play_canonical_key,
+                "selectedTrumpCardId": self.self_play_selected_trump_card_id,
+            },
         }
 
     def to_public_dict_for_viewer(self, viewer_seat_index: int) -> dict:

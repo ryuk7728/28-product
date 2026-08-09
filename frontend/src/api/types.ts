@@ -7,6 +7,21 @@ export type Card = {
   label: string;
 };
 
+export type BidPolicyMode = "aggressive" | "optimal" | "custom";
+
+export type BidThresholds = {
+  opening15: number;
+  opening16: number;
+  laterBid: number;
+  jumpTo16: number;
+};
+
+export type BidPolicy = {
+  mode: BidPolicyMode;
+  positionAware: boolean;
+  thresholds?: BidThresholds;
+};
+
 export type GameState = {
   gameId: string;
   viewerSeatIndex?: number;
@@ -26,6 +41,7 @@ export type GameState = {
   }>;
   drawPileCount: number;
   autoDeal: boolean;
+  botBiddingPolicy?: BidPolicy & { thresholds: BidThresholds };
   bidsR1: number[];
   bidsR2: number[];
   round1BidderSeat: number | null;
@@ -47,6 +63,15 @@ export type GameState = {
     winnerTeam: number | null;
   };
   eventLog: string[];
+  selfPlay?: {
+    enabled: boolean;
+    resultLogged: boolean;
+    bidderSeat: number | null;
+    bidderTeam: number | null;
+    first4CardIds: string[];
+    canonicalKey: string[][];
+    selectedTrumpCardId: string | null;
+  };
 };
 
 export type RoomJoinResponse = {

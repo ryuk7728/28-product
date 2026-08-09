@@ -6,6 +6,7 @@ from typing import Awaitable, Callable
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from app.bots.bid_policy import choose_r1_bid_from_data
 from app.bots.bidding_bot import plan_bid_and_trump_from_first4
 from app.engine.bidding_engine import (
     compute_r1_turn_rules,
@@ -29,6 +30,7 @@ from app.engine.play_engine import (
     resolve_if_catch_complete,
 )
 from app.engine.bot_runner import advance_bots_until_human
+from app.engine.self_play_results import append_self_play_result
 
 router = APIRouter()
 
@@ -358,7 +360,7 @@ async def _advance_bots_until_human_any_phase(
 ) -> None:
     """
     Auto-advance bot seats (0,2) in:
-      - BIDDING_R1: rules-based bid (and if starting bidder has canRedeal -> bot always redeals)
+      - BIDDING_R1: pooled empirical-data bid (and if starting bidder has canRedeal -> bot always redeals)
       - TRUMP_SELECT_R1: rules-based trump pick
       - BIDDING_R2: bots always pass
       - PLAY: rollout bot plays
@@ -392,13 +394,20 @@ async def _advance_bots_until_human_any_phase(
                 [to_card_id(c) for c in state.players_cards[seat]]
             )
 
-            current_highest, highest_seat = _current_highest_r1(state)
+            _, highest_seat = _current_highest_r1(state)
             partner = _partner_seat(seat)
 
             if highest_seat == partner and highest_seat in BOT_SEATS:
                 bid_value = 0
             else:
-                bid_value = plan.bid if plan.bid > current_highest else 0
+                bid_value = choose_r1_bid_from_data(
+                    plan.canonical_groups,
+                    min_bid_exclusive=rules.min_bid_exclusive,
+                    max_bid_inclusive=rules.max_bid_inclusive,
+                    is_opening_bidder=state.bidding_r1_step == 0,
+                    policy=state.bot_bidding_policy,
+                    bid_position=state.bidding_r1_step + 1,
+                )
 
             if bid_value != 0:
                 if bid_value <= rules.min_bid_exclusive or bid_value > rules.max_bid_inclusive:
@@ -854,6 +863,60 @@ async def ws_game(websocket: WebSocket, game_id: str) -> None:
         return
 
     await _run_ws_session(websocket, game_id=game_id, state=state, viewer_seat=None)
+
+
+@router.websocket("/ws/self-play/{game_id}")
+async def ws_self_play(websocket: WebSocket, game_id: str) -> None:
+    await websocket.accept()
+
+    state = game_manager.get_game(game_id)
+    if not state:
+        await websocket.send_json({"type": "ERROR", "message": "Game not found"})
+        await websocket.close()
+        return
+    if not state.self_play:
+        await websocket.send_json(
+            {"type": "ERROR", "message": "Game is not a self-play game"}
+        )
+        await websocket.close()
+        return
+
+    app = websocket.scope["app"]
+    pool = app.state.process_pool
+    bot_sem = app.state.bot_sem
+
+    async def send_state_fn(ws: WebSocket, current_state) -> None:
+        await _send_state_for_viewer(ws, current_state, viewer_seat=None, can_act=False)
+
+    await _send_state_for_viewer(websocket, state, viewer_seat=None, can_act=False)
+
+    try:
+        await advance_bots_until_human(
+            state,
+            pool,
+            bot_sem,
+            websocket,
+            send_state_fn,
+            bot_seats={0, 1, 2, 3},
+        )
+        append_self_play_result(state)
+        await _send_state_for_viewer(websocket, state, viewer_seat=None, can_act=False)
+
+        while True:
+            msg = await websocket.receive_json()
+            if msg.get("type") == "GET_STATE":
+                await _send_state_for_viewer(
+                    websocket, state, viewer_seat=None, can_act=False
+                )
+            else:
+                await websocket.send_json(
+                    {
+                        "type": "ERROR",
+                        "message": "Self-play sockets are read-only.",
+                    }
+                )
+    except WebSocketDisconnect:
+        return
 
 
 @router.websocket("/ws/rooms/{room_code}")

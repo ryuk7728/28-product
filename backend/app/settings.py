@@ -133,7 +133,7 @@ class Settings:
         "http://localhost:5173",
         "http://127.0.0.1:5173",
         "https://28-superhuman-ui.vercel.app",
-        "https://28-multiplayer.vercel.app"
+        "https://28-multiplayer.vercel.app",
     )
 
 

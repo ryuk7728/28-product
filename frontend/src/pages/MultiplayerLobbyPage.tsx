@@ -1,7 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { http } from "../api/http";
 import { PLAYER_NAMES } from "../config/constants";
-import type { RoomJoinResponse, RoomStatusResponse } from "../api/types";
+import type {
+  BidPolicy,
+  BidPolicyMode,
+  BidThresholds,
+  RoomJoinResponse,
+  RoomStatusResponse,
+} from "../api/types";
 import "../styles/multiplayer-lobby.scss";
 
 export type MultiplayerSession =
@@ -20,6 +26,7 @@ export type MultiplayerSession =
 
 type Props = {
   onReady: (session: MultiplayerSession) => void;
+  onSelfPlay?: () => void;
 };
 
 type WaitingState = {
@@ -28,13 +35,48 @@ type WaitingState = {
   seatIndex?: number;
   playerToken?: string;
   playersJoined: number;
+  biddingPolicy?: BidPolicy;
 };
+
+const BID_POLICY_STORAGE_KEY = "bot_bidding_policy_v1";
+const DEFAULT_CUSTOM_THRESHOLDS: BidThresholds = {
+  opening15: 67,
+  opening16: 70,
+  laterBid: 67,
+  jumpTo16: 75,
+};
+
+function loadBidPolicy(): BidPolicy {
+  try {
+    const stored = JSON.parse(
+      localStorage.getItem(BID_POLICY_STORAGE_KEY) || "null"
+    ) as BidPolicy | null;
+    if (
+      stored &&
+      ["aggressive", "optimal", "custom"].includes(stored.mode) &&
+      typeof stored.positionAware === "boolean"
+    ) {
+      return {
+        mode: stored.mode,
+        positionAware: stored.positionAware,
+        thresholds: { ...DEFAULT_CUSTOM_THRESHOLDS, ...stored.thresholds },
+      };
+    }
+  } catch {
+    // Ignore malformed local preferences and restore the safe default.
+  }
+  return {
+    mode: "aggressive",
+    positionAware: false,
+    thresholds: DEFAULT_CUSTOM_THRESHOLDS,
+  };
+}
 
 function tokenStorageKey(roomCode: string): string {
   return `room_token_${roomCode.toUpperCase()}`;
 }
 
-export function MultiplayerLobbyPage({ onReady }: Props) {
+export function MultiplayerLobbyPage({ onReady, onSelfPlay }: Props) {
   const [createPlayerName, setCreatePlayerName] = useState("");
   const [joinPlayerName, setJoinPlayerName] = useState("");
   const [joinCode, setJoinCode] = useState("");
@@ -42,6 +84,31 @@ export function MultiplayerLobbyPage({ onReady }: Props) {
   const [loading, setLoading] = useState(false);
   const [waiting, setWaiting] = useState<WaitingState | null>(null);
   const [copied, setCopied] = useState(false);
+  const [biddingPolicy, setBiddingPolicy] = useState<BidPolicy>(loadBidPolicy);
+
+  useEffect(() => {
+    localStorage.setItem(BID_POLICY_STORAGE_KEY, JSON.stringify(biddingPolicy));
+  }, [biddingPolicy]);
+
+  const setPolicyMode = (mode: BidPolicyMode) => {
+    setBiddingPolicy((current) => ({ ...current, mode }));
+  };
+
+  const setCustomThreshold = (field: keyof BidThresholds, rawValue: string) => {
+    const value = Math.max(0, Math.min(100, Number(rawValue) || 0));
+    setBiddingPolicy((current) => ({
+      ...current,
+      thresholds: {
+        ...DEFAULT_CUSTOM_THRESHOLDS,
+        ...current.thresholds,
+        [field]: value,
+      },
+    }));
+  };
+
+  const policyLabel = `${
+    biddingPolicy.mode[0].toUpperCase() + biddingPolicy.mode.slice(1)
+  } · ${biddingPolicy.positionAware ? "By position" : "Pooled"}`;
 
   const normalizedJoinCode = useMemo(() => joinCode.trim().toUpperCase(), [joinCode]);
   const existingJoinToken = useMemo(() => {
@@ -78,6 +145,7 @@ export function MultiplayerLobbyPage({ onReady }: Props) {
     try {
       const res = await http.post<RoomJoinResponse>("/rooms", {
         playerName: createPlayerName.trim(),
+        biddingPolicy,
       });
       const data = res.data;
       persistToken(data.roomCode, data.playerToken);
@@ -90,6 +158,7 @@ export function MultiplayerLobbyPage({ onReady }: Props) {
         seatIndex: data.seatIndex,
         playerToken: data.playerToken,
         playersJoined: data.playersJoined,
+        biddingPolicy,
       });
     } catch (e: unknown) {
       const err = e as { response?: { data?: { detail?: string } }; message?: string };
@@ -310,6 +379,15 @@ export function MultiplayerLobbyPage({ onReady }: Props) {
                   </div>
                 </div>
               </div>
+              {waiting.biddingPolicy ? (
+                <div className="info-row">
+                  <span className="info-key">Bot Bidding</span>
+                  <span className="info-val policy-value">
+                    {waiting.biddingPolicy.mode} ·{" "}
+                    {waiting.biddingPolicy.positionAware ? "position" : "pooled"}
+                  </span>
+                </div>
+              ) : null}
             </div>
 
             <button className="btn-back" onClick={() => setWaiting(null)}>
@@ -357,6 +435,12 @@ export function MultiplayerLobbyPage({ onReady }: Props) {
         </h1>
         <p className="page-sub">Create a room or join with a code</p>
 
+        {onSelfPlay ? (
+          <button className="btn-self-play" onClick={onSelfPlay}>
+            Open Self Play Arena
+          </button>
+        ) : null}
+
         <div className="panels">
           <div className="panel">
             <div>
@@ -375,6 +459,83 @@ export function MultiplayerLobbyPage({ onReady }: Props) {
                 autoComplete="off"
               />
             </div>
+
+            <details className="bid-settings">
+              <summary>
+                <span>
+                  <strong>Bot bidding</strong>
+                  <small>Empirical policy</small>
+                </span>
+                <span className="policy-summary">{policyLabel}</span>
+              </summary>
+
+              <div className="bid-settings-body">
+                <div className="policy-modes" role="group" aria-label="Bidding preset">
+                  {(["aggressive", "optimal", "custom"] as BidPolicyMode[]).map((mode) => (
+                    <button
+                      type="button"
+                      key={mode}
+                      className={biddingPolicy.mode === mode ? "active" : ""}
+                      onClick={() => setPolicyMode(mode)}
+                    >
+                      {mode}
+                    </button>
+                  ))}
+                </div>
+
+                <label className="position-toggle">
+                  <span>
+                    <strong>Use bid position</strong>
+                    <small>25 games per hand and position</small>
+                  </span>
+                  <input
+                    type="checkbox"
+                    checked={biddingPolicy.positionAware}
+                    onChange={(event) =>
+                      setBiddingPolicy((current) => ({
+                        ...current,
+                        positionAware: event.target.checked,
+                      }))
+                    }
+                  />
+                  <i aria-hidden />
+                </label>
+
+                {biddingPolicy.mode === "custom" ? (
+                  <div className="threshold-grid">
+                    {(
+                      [
+                        ["opening15", "Opening 15"],
+                        ["opening16", "Opening 16"],
+                        ["laterBid", "Later bid"],
+                        ["jumpTo16", "14→16 jump"],
+                      ] as Array<[keyof BidThresholds, string]>
+                    ).map(([field, label]) => (
+                      <label key={field}>
+                        <span>{label}</span>
+                        <span className="percent-input">
+                          <input
+                            type="number"
+                            min="0"
+                            max="100"
+                            inputMode="numeric"
+                            value={(biddingPolicy.thresholds || DEFAULT_CUSTOM_THRESHOLDS)[field]}
+                            onChange={(event) => setCustomThreshold(field, event.target.value)}
+                          />
+                          <b>%</b>
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="preset-note">
+                    {biddingPolicy.mode === "aggressive"
+                      ? "Open 15 ≥61% · open 16 ≥66% · later ≥61% · jump ≥71%"
+                      : "Open 15 ≥67% · open 16 ≥70% · later ≥67% · jump ≥75%"}
+                  </p>
+                )}
+              </div>
+            </details>
 
             <button className="btn-create" onClick={createRoom} disabled={loading || !createPlayerName.trim()}>
               {loading ? "Creating..." : "Create Room"}

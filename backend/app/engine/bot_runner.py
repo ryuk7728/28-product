@@ -8,6 +8,7 @@ from app.bots.rollout_bot import choose_action_with_rollouts_parallel
 from app.engine.play_engine import (
     apply_play_card,
     apply_reveal_choice,
+    compute_play_legal_actions,
     resolve_if_catch_complete,
 )
 
@@ -25,6 +26,7 @@ async def advance_bots_until_human(
     bot_sem,
     websocket: Any,
     send_state_fn: Callable,
+    bot_seats: set[int] | None = None,
 ) -> None:
     """
     Runs bot turns (seats 0 and 2) until current actor is human (1 or 3) or game ends.
@@ -33,10 +35,24 @@ async def advance_bots_until_human(
     When a bot completes a trick (4 cards), sends state to frontend and waits
     before clearing, so the completed trick is visible for 5 seconds.
     """
+    active_bot_seats = BOT_SEATS if bot_seats is None else bot_seats
+
     while state.phase == "PLAY":
         actor = (state.leaderIndex + len(state.s)) % 4
-        if actor not in BOT_SEATS:
+        if actor not in active_bot_seats:
             return
+
+        legal = compute_play_legal_actions(state)
+        if (
+            legal.type == "NO_ACTION"
+            and getattr(state, "self_play", False)
+            and state.player_trump is not None
+            and actor == state.finalBid - 1
+            and not state.trumpReveal
+            and len(state.play_players[actor]["cards"]) == 0
+        ):
+            apply_reveal_choice(state, actor, True)
+            continue
 
         # Limit concurrent bot computations globally
         async with bot_sem:

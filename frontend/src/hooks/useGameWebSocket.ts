@@ -21,6 +21,7 @@ export interface UseGameWebSocketOptions {
   roomCode?: string;
   playerToken?: string;
   spectateMode?: boolean;
+  selfPlayMode?: boolean;
   onStateUpdate?: (state: GameState) => void;
   onLegalActions?: (actions: LegalActions) => void;
   onError?: (message: string) => void;
@@ -45,6 +46,7 @@ export function useGameWebSocket(
   options: UseGameWebSocketOptions
 ): UseGameWebSocketReturn {
   const { gameId, roomCode, playerToken, spectateMode = false } = options;
+  const selfPlayMode = options.selfPlayMode ?? false;
 
   const wsRef = useRef<WebSocket | null>(null);
   const [connected, setConnected] = useState(false);
@@ -78,6 +80,8 @@ export function useGameWebSocket(
             : "";
           wsUrl = `${trimmed}/ws/rooms/${encodeURIComponent(roomCode)}${tokenQuery}`;
         }
+      } else if (selfPlayMode) {
+        wsUrl = `${trimmed}/ws/self-play/${gameId}`;
       } else {
         wsUrl = `${trimmed}/ws/games/${gameId}`;
       }
@@ -94,6 +98,8 @@ export function useGameWebSocket(
             : "";
           wsUrl = `${protocol}//${host}:${port}/ws/rooms/${encodeURIComponent(roomCode)}${tokenQuery}`;
         }
+      } else if (selfPlayMode) {
+        wsUrl = `${protocol}//${host}:${port}/ws/self-play/${gameId}`;
       } else {
         wsUrl = `${protocol}//${host}:${port}/ws/games/${gameId}`;
       }
@@ -165,7 +171,7 @@ export function useGameWebSocket(
       }
       wsRef.current = null;
     };
-  }, [gameId, roomCode, playerToken, spectateMode]); // Reconnect when connection identity changes
+  }, [gameId, roomCode, playerToken, spectateMode, selfPlayMode]); // Reconnect when connection identity changes
 
   // Send message helper
   const sendMessage = useCallback((msg: object) => {

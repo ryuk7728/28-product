@@ -1,12 +1,23 @@
 import { useState } from "react";
 import { GamePage } from "./pages/GamePage";
 import { MultiplayerLobbyPage, type MultiplayerSession } from "./pages/MultiplayerLobbyPage";
+import { SelfPlayArenaPage } from "./pages/SelfPlayArenaPage";
 
 export default function App() {
   const [session, setSession] = useState<MultiplayerSession | null>(null);
+  const [showSelfPlay, setShowSelfPlay] = useState(false);
+
+  if (showSelfPlay) {
+    return <SelfPlayArenaPage onExit={() => setShowSelfPlay(false)} />;
+  }
 
   if (!session) {
-    return <MultiplayerLobbyPage onReady={setSession} />;
+    return (
+      <MultiplayerLobbyPage
+        onReady={setSession}
+        onSelfPlay={() => setShowSelfPlay(true)}
+      />
+    );
   }
 
   return (

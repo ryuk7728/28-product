@@ -5,8 +5,10 @@ steps:
       - -f
       - backend/Dockerfile
       - -t
-      - gcr.io/$PROJECT_ID/game28-api-rust
+      - us-central1-docker.pkg.dev/$PROJECT_ID/t28-biddata/game28-api-rust:bidding-experiments-v2
       - .
 
 images:
-  - gcr.io/$PROJECT_ID/game28-api-rust
+  - us-central1-docker.pkg.dev/$PROJECT_ID/t28-biddata/game28-api-rust:bidding-experiments-v2
+
+timeout: 2400s

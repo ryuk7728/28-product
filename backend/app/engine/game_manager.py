@@ -3,8 +3,12 @@ from __future__ import annotations
 import random
 import uuid
 
-from app.engine.cards_adapter import from_card_id
+from app.bots.bidding_bot import plan_bid_and_trump_from_first4
+from app.bots.bid_policy import BidPolicyConfig
+from app.engine.cards_adapter import from_card_id, to_card_id
+from app.engine.canonical_key import build_canonical_key_and_mapping
 from app.engine.fixed_deck import load_fixed_deck_cards
+from app.engine.play_engine import init_play_state
 from app.engine.state import GameState
 from app.engine.validator import validate_first4_hands
 from app.settings import settings
@@ -19,6 +23,7 @@ class GameManager:
         self,
         *,
         starting_bidder_index: int,
+        bot_bidding_policy: BidPolicyConfig | None = None,
     ) -> GameState:
         """
         Create a new game with automatic card distribution.
@@ -63,6 +68,7 @@ class GameManager:
             draw_pile=list(remaining),
             auto_deal=True,  # Flag to indicate auto-deal mode
             fixed_deck_mode=fixed_mode,
+            bot_bidding_policy=bot_bidding_policy or BidPolicyConfig.aggressive(),
             event_log=[
                 "Game created (auto-deal)."
                 if not fixed_mode
@@ -103,6 +109,7 @@ class GameManager:
         *,
         starting_bidder_index: int,
         first4_hands: list[list[str]],
+        bot_bidding_policy: BidPolicyConfig | None = None,
     ) -> GameState:
         if starting_bidder_index < 0 or starting_bidder_index > 3:
             raise ValueError("startingBidderIndex must be in 0..3")
@@ -127,6 +134,7 @@ class GameManager:
             players_cards=players_cards,
             draw_pile=remaining,
             fixed_deck_mode=False,
+            bot_bidding_policy=bot_bidding_policy or BidPolicyConfig.aggressive(),
             event_log=[
                 "Game created (manual first-4).",
                 f"Starting bidder: P{starting_bidder_index + 1}",
@@ -135,6 +143,141 @@ class GameManager:
 
         self._games[game_id] = state
         return state
+
+    def create_self_play_game(self, *, max_retries: int = 100) -> GameState:
+        """
+        Create a 4-bot self-play game for bid-data generation.
+
+        The normal bidding phases are skipped:
+          - deal first 4 cards to each seat
+          - pick one random bidder
+          - use the existing first-4 trump-selection policy
+          - deal the remaining cards
+          - enter PLAY immediately
+
+        Deals that trigger redeal/abort rules are skipped by retrying locally.
+        """
+        last_abort_reason: str | None = None
+
+        for _attempt in range(max(1, max_retries)):
+            deck = Cards.packOf28()
+            random.shuffle(deck)
+
+            first4 = [
+                deck[0:4],
+                deck[4:8],
+                deck[8:12],
+                deck[12:16],
+            ]
+            remaining = deck[16:32]
+
+            bidder_seat = random.randrange(4)
+            bidder_team = 1 if bidder_seat % 2 == 0 else 2
+            bidder_first4_ids = [to_card_id(c) for c in first4[bidder_seat]]
+            canonical = build_canonical_key_and_mapping(bidder_first4_ids)
+            plan = plan_bid_and_trump_from_first4(bidder_first4_ids)
+
+            players_cards = [list(hand) for hand in first4]
+            chosen_trump = None
+            for idx, card in enumerate(players_cards[bidder_seat]):
+                if to_card_id(card) == plan.trump_card_id:
+                    chosen_trump = players_cards[bidder_seat].pop(idx)
+                    break
+
+            if chosen_trump is None:
+                chosen_trump = players_cards[bidder_seat].pop(0)
+
+            random.shuffle(remaining)
+            for seat in range(4):
+                for _ in range(4):
+                    players_cards[seat].append(remaining.pop(0))
+
+            abort_reason = self._abort_reason_after_full_deal(
+                players_cards=players_cards,
+                bidder_seat=bidder_seat,
+                player_trump=chosen_trump,
+            )
+            if abort_reason:
+                last_abort_reason = abort_reason
+                continue
+
+            starting_bidder_index = random.randrange(4)
+            bidding_order = [(starting_bidder_index + i) % 4 for i in range(4)]
+            game_id = str(uuid.uuid4())
+            state = GameState(
+                game_id=game_id,
+                phase="PLAY",
+                starting_bidder_index=starting_bidder_index,
+                bidding_order=bidding_order,
+                players_cards=players_cards,
+                draw_pile=[],
+                auto_deal=True,
+                fixed_deck_mode=False,
+                seat_types=["bot", "bot", "bot", "bot"],
+                player_names=["Bot 1", "Bot 2", "Bot 3", "Bot 4"],
+                event_log=[
+                    "Self-play game created.",
+                    f"Random bidder: P{bidder_seat + 1}.",
+                    "No numerical bid was made for this data run.",
+                    "Bidder selected a concealed trump card from first 4.",
+                ],
+                self_play=True,
+                self_play_bidder_seat=bidder_seat,
+                self_play_bidder_team=bidder_team,
+                self_play_first4_card_ids=bidder_first4_ids,
+                self_play_canonical_key=canonical.canonical_groups,
+                self_play_selected_trump_card_id=to_card_id(chosen_trump),
+            )
+            state.round1_bidder_seat = bidder_seat
+            state.round1_bid_value = 0
+            state.final_bidder_seat = bidder_seat
+            state.final_bid_value = 0
+            state.player_trump = chosen_trump
+            state.bids_r1_by_seat[bidder_seat] = 0
+
+            init_play_state(state)
+
+            self._games[game_id] = state
+            return state
+
+        detail = f"Unable to create non-aborted self-play deal in {max_retries} attempts."
+        if last_abort_reason:
+            detail += f" Last abort reason: {last_abort_reason}."
+        raise ValueError(detail)
+
+    def _abort_reason_after_full_deal(
+        self,
+        *,
+        players_cards: list[list[Cards]],
+        bidder_seat: int,
+        player_trump: Cards,
+    ) -> str | None:
+        effective_hands = [list(hand) for hand in players_cards]
+        effective_hands[bidder_seat].append(player_trump)
+
+        for cards in effective_hands:
+            jack_count = sum(1 for c in cards if c.rank == "Jack")
+            if jack_count == 4:
+                return "ALL_FOUR_JACKS"
+
+        trump_suit = player_trump.suit
+        bidder_team = 1 if bidder_seat % 2 == 0 else 2
+        team1_trumps = 0
+        team2_trumps = 0
+
+        for seat, cards in enumerate(effective_hands):
+            trumps = sum(1 for c in cards if c.suit == trump_suit)
+            if seat % 2 == 0:
+                team1_trumps += trumps
+            else:
+                team2_trumps += trumps
+
+        bidder_trumps = team1_trumps if bidder_team == 1 else team2_trumps
+        defender_trumps = team2_trumps if bidder_team == 1 else team1_trumps
+        if bidder_trumps == 8 and defender_trumps == 0:
+            return "ALL_TRUMPS_ONE_SIDE"
+
+        return None
 
     def get_game(self, game_id: str) -> GameState | None:
         return self._games.get(game_id)

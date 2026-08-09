@@ -1,0 +1,15 @@
+.gcloudignore
+.git
+.gitignore
+.vscode
+.pytest_cache
+**/__pycache__
+**/*.pyc
+frontend
+meta
+backend/.env
+backend/.pytest_cache
+backend/data
+backend/tests
+backend/venv
+backend/rust_ext/target
