@@ -438,8 +438,17 @@
     border-top: 1px solid rgba(201, 162, 39, 0.12);
   }
 
+  .settings-section-label {
+    margin-bottom: -6px;
+    padding-top: 12px;
+    color: rgba(201, 162, 39, 0.7);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 2.5px;
+    text-transform: uppercase;
+  }
+
   .policy-modes {
-    margin-top: 12px;
     display: grid;
     grid-template-columns: repeat(3, 1fr);
     padding: 3px;
@@ -466,6 +475,52 @@
     color: #112e1c;
     background: var(--gold-light);
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+  }
+
+  .settings-divider {
+    height: 1px;
+    margin: 1px 0;
+    background: linear-gradient(90deg, transparent, rgba(201, 162, 39, 0.24), transparent);
+  }
+
+  .play-policy-heading > span {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .play-policy-heading strong {
+    color: var(--cream);
+    font-family: "Playfair Display", serif;
+    font-size: 13px;
+  }
+
+  .play-policy-heading small {
+    margin-top: 3px;
+    color: var(--cream-dim);
+    font-size: 11px;
+    font-style: italic;
+  }
+
+  .play-policy-modes {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .play-policy-modes button {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+  }
+
+  .play-policy-modes button small {
+    opacity: 0.7;
+    font-size: 8px;
+    font-weight: 400;
+    letter-spacing: 0.4px;
+  }
+
+  .play-policy-modes button.active small {
+    opacity: 0.75;
   }
 
   .position-toggle {
@@ -570,6 +625,10 @@
     font-size: 11px;
     font-style: italic;
     line-height: 1.35;
+  }
+
+  .play-note {
+    margin-top: -5px;
   }
 
   .policy-value {

@@ -1,7 +1,8 @@
 from pydantic import BaseModel, Field
 from fastapi import APIRouter, HTTPException
 
-from app.api.bid_policy_models import BidPolicyRequest, resolve_bid_policy
+from app.api.bid_policy_models import BidPolicyRequest, resolve_bid_policy, resolve_k_policy
+from app.engine.k_policy import KPolicyMode
 from app.engine.game_manager import game_manager
 
 router = APIRouter()
@@ -11,11 +12,13 @@ class CreateGameRequest(BaseModel):
     startingBidderIndex: int = Field(ge=0, le=3)
     first4Hands: list[list[str]]
     biddingPolicy: BidPolicyRequest | None = None
+    kPolicy: KPolicyMode | None = None
 
 
 class CreateGameAutoRequest(BaseModel):
     startingBidderIndex: int = Field(ge=0, le=3)
     biddingPolicy: BidPolicyRequest | None = None
+    kPolicy: KPolicyMode | None = None
 
 
 class CreateGameResponse(BaseModel):
@@ -34,6 +37,7 @@ def create_game_auto(req: CreateGameAutoRequest) -> CreateGameResponse:
         state = game_manager.create_game_auto_deal(
             starting_bidder_index=req.startingBidderIndex,
             bot_bidding_policy=resolve_bid_policy(req.biddingPolicy),
+            bot_k_policy=resolve_k_policy(req.kPolicy),
         )
         return CreateGameResponse(gameId=state.game_id)
     except ValueError as e:
@@ -47,6 +51,7 @@ def create_game(req: CreateGameRequest) -> CreateGameResponse:
             starting_bidder_index=req.startingBidderIndex,
             first4_hands=req.first4Hands,
             bot_bidding_policy=resolve_bid_policy(req.biddingPolicy),
+            bot_k_policy=resolve_k_policy(req.kPolicy),
         )
         return CreateGameResponse(gameId=state.game_id)
     except ValueError as e:

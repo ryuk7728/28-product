@@ -22,6 +22,13 @@ export type BidPolicy = {
   thresholds?: BidThresholds;
 };
 
+export type KPolicyMode = "regular" | "aggressive";
+
+export type KPolicy = {
+  mode: KPolicyMode;
+  kByCatch: number[];
+};
+
 export type GameState = {
   gameId: string;
   viewerSeatIndex?: number;
@@ -42,6 +49,7 @@ export type GameState = {
   drawPileCount: number;
   autoDeal: boolean;
   botBiddingPolicy?: BidPolicy & { thresholds: BidThresholds };
+  botKPolicy?: KPolicy;
   bidsR1: number[];
   bidsR2: number[];
   round1BidderSeat: number | null;

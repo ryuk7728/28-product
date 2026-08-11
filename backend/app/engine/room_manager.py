@@ -8,6 +8,7 @@ import time
 
 from app.bots.bid_policy import BidPolicyConfig
 from app.engine.game_manager import game_manager
+from app.engine.k_policy import KPolicyConfig
 from app.settings import settings
 
 HUMAN_ROOM_SEATS: tuple[int, int] = (1, 3)
@@ -37,6 +38,7 @@ class Room:
     created_at: float
     starting_bidder_index: int
     bot_bidding_policy: BidPolicyConfig = field(default_factory=BidPolicyConfig.aggressive)
+    bot_k_policy: KPolicyConfig = field(default_factory=KPolicyConfig)
     game_id: str | None = None
     seat_tokens: dict[int, str] = field(default_factory=dict)
     seat_names: dict[int, str] = field(default_factory=dict)
@@ -124,6 +126,7 @@ class RoomManager:
         state = game_manager.create_game_auto_deal(
             starting_bidder_index=room.starting_bidder_index,
             bot_bidding_policy=room.bot_bidding_policy,
+            bot_k_policy=room.bot_k_policy,
         )
         state.player_names = [
             "T-1000",
@@ -140,6 +143,7 @@ class RoomManager:
         player_name: str,
         starting_bidder_index: int | None = None,
         bot_bidding_policy: BidPolicyConfig | None = None,
+        bot_k_policy: KPolicyConfig | None = None,
     ) -> RoomAssignment:
         with self._lock:
             self._cleanup_expired_locked()
@@ -153,6 +157,7 @@ class RoomManager:
                     else starting_bidder_index
                 ),
                 bot_bidding_policy=bot_bidding_policy or BidPolicyConfig.aggressive(),
+                bot_k_policy=bot_k_policy or KPolicyConfig(),
             )
             seat_index = HUMAN_ROOM_SEATS[0]
             player_token = secrets.token_urlsafe(24)
@@ -233,6 +238,7 @@ class RoomManager:
                 "waitingForPlayer": room.waiting_for_player,
                 "playersJoined": room.players_joined,
                 "biddingPolicy": room.bot_bidding_policy.to_public_dict(),
+                "kPolicy": room.bot_k_policy.to_public_dict(),
             }
 
     def validate_player(self, *, room_code: str, player_token: str) -> tuple[Room, int]:

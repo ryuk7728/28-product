@@ -3,7 +3,8 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from app.api.bid_policy_models import BidPolicyRequest, resolve_bid_policy
+from app.api.bid_policy_models import BidPolicyRequest, resolve_bid_policy, resolve_k_policy
+from app.engine.k_policy import KPolicyMode
 from app.engine.room_manager import (
     RoomAssignment,
     RoomError,
@@ -19,6 +20,7 @@ class CreateRoomRequest(BaseModel):
     startingBidderIndex: int | None = Field(default=None, ge=0, le=3)
     playerName: str = Field(min_length=1, max_length=24)
     biddingPolicy: BidPolicyRequest | None = None
+    kPolicy: KPolicyMode | None = None
 
 
 class JoinRoomRequest(BaseModel):
@@ -56,6 +58,7 @@ def create_room(req: CreateRoomRequest) -> RoomJoinResponse:
             player_name=req.playerName,
             starting_bidder_index=req.startingBidderIndex,
             bot_bidding_policy=resolve_bid_policy(req.biddingPolicy),
+            bot_k_policy=resolve_k_policy(req.kPolicy),
         )
         return _to_join_response(assignment)
     except RoomError as e:

@@ -102,12 +102,17 @@ def test_room_propagates_custom_position_aware_policy_to_game_state() -> None:
                 "startingBidderIndex": 2,
                 "playerName": "Alice",
                 "biddingPolicy": policy,
+                "kPolicy": "aggressive",
             },
         )
         assert created.status_code == 200
         room = created.json()
         status = client.get(f"/rooms/{room['roomCode']}").json()
         assert status["biddingPolicy"] == policy
+        assert status["kPolicy"] == {
+            "mode": "aggressive",
+            "kByCatch": [3, 3, 4, 4, 4, 3, 2, 1],
+        }
 
         joined = client.post(
             "/rooms/join",
@@ -117,6 +122,7 @@ def test_room_propagates_custom_position_aware_policy_to_game_state() -> None:
         game = client.get(f"/games/{joined.json()['gameId']}").json()
         assert game["startingBidderIndex"] == 2
         assert game["botBiddingPolicy"] == policy
+        assert game["botKPolicy"] == status["kPolicy"]
 
 
 def test_custom_policy_requires_thresholds() -> None:
@@ -129,6 +135,22 @@ def test_custom_policy_requires_thresholds() -> None:
             },
         )
         assert response.status_code == 422
+
+
+def test_room_defaults_to_regular_k_policy_and_rejects_unknown_mode() -> None:
+    with TestClient(app) as client:
+        created = client.post("/rooms", json={"playerName": "Alice"})
+        assert created.status_code == 200
+        status = client.get(f"/rooms/{created.json()['roomCode']}").json()
+        assert status["kPolicy"] == {
+            "mode": "regular",
+            "kByCatch": [2, 2, 3, 3, 4, 3, 2, 1],
+        }
+
+        invalid = client.post(
+            "/rooms", json={"playerName": "Alice", "kPolicy": "maximum"}
+        )
+        assert invalid.status_code == 422
 
 
 def test_ws_room_redacts_hands_and_enforces_seat_actions() -> None:

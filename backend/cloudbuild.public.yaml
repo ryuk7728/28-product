@@ -5,10 +5,10 @@ steps:
       - -f
       - backend/Dockerfile
       - -t
-      - us-central1-docker.pkg.dev/$PROJECT_ID/t28-biddata/game28-api-rust:bidding-experiments-v2
+      - us-central1-docker.pkg.dev/$PROJECT_ID/t28-biddata/game28-api-rust:configurable-k-v3
       - .
 
 images:
-  - us-central1-docker.pkg.dev/$PROJECT_ID/t28-biddata/game28-api-rust:bidding-experiments-v2
+  - us-central1-docker.pkg.dev/$PROJECT_ID/t28-biddata/game28-api-rust:configurable-k-v3
 
 timeout: 2400s

@@ -5,6 +5,7 @@ import type {
   BidPolicy,
   BidPolicyMode,
   BidThresholds,
+  KPolicyMode,
   RoomJoinResponse,
   RoomStatusResponse,
 } from "../api/types";
@@ -36,9 +37,11 @@ type WaitingState = {
   playerToken?: string;
   playersJoined: number;
   biddingPolicy?: BidPolicy;
+  kPolicy?: KPolicyMode;
 };
 
 const BID_POLICY_STORAGE_KEY = "bot_bidding_policy_v1";
+const K_POLICY_STORAGE_KEY = "bot_k_policy_v1";
 const DEFAULT_CUSTOM_THRESHOLDS: BidThresholds = {
   opening15: 67,
   opening16: 70,
@@ -72,6 +75,11 @@ function loadBidPolicy(): BidPolicy {
   };
 }
 
+function loadKPolicy(): KPolicyMode {
+  const stored = localStorage.getItem(K_POLICY_STORAGE_KEY);
+  return stored === "aggressive" ? "aggressive" : "regular";
+}
+
 function tokenStorageKey(roomCode: string): string {
   return `room_token_${roomCode.toUpperCase()}`;
 }
@@ -85,10 +93,15 @@ export function MultiplayerLobbyPage({ onReady, onSelfPlay }: Props) {
   const [waiting, setWaiting] = useState<WaitingState | null>(null);
   const [copied, setCopied] = useState(false);
   const [biddingPolicy, setBiddingPolicy] = useState<BidPolicy>(loadBidPolicy);
+  const [kPolicy, setKPolicy] = useState<KPolicyMode>(loadKPolicy);
 
   useEffect(() => {
     localStorage.setItem(BID_POLICY_STORAGE_KEY, JSON.stringify(biddingPolicy));
   }, [biddingPolicy]);
+
+  useEffect(() => {
+    localStorage.setItem(K_POLICY_STORAGE_KEY, kPolicy);
+  }, [kPolicy]);
 
   const setPolicyMode = (mode: BidPolicyMode) => {
     setBiddingPolicy((current) => ({ ...current, mode }));
@@ -108,7 +121,7 @@ export function MultiplayerLobbyPage({ onReady, onSelfPlay }: Props) {
 
   const policyLabel = `${
     biddingPolicy.mode[0].toUpperCase() + biddingPolicy.mode.slice(1)
-  } · ${biddingPolicy.positionAware ? "By position" : "Pooled"}`;
+  } bid · ${kPolicy === "aggressive" ? "Aggressive" : "Regular"} play`;
 
   const normalizedJoinCode = useMemo(() => joinCode.trim().toUpperCase(), [joinCode]);
   const existingJoinToken = useMemo(() => {
@@ -146,6 +159,7 @@ export function MultiplayerLobbyPage({ onReady, onSelfPlay }: Props) {
       const res = await http.post<RoomJoinResponse>("/rooms", {
         playerName: createPlayerName.trim(),
         biddingPolicy,
+        kPolicy,
       });
       const data = res.data;
       persistToken(data.roomCode, data.playerToken);
@@ -159,6 +173,7 @@ export function MultiplayerLobbyPage({ onReady, onSelfPlay }: Props) {
         playerToken: data.playerToken,
         playersJoined: data.playersJoined,
         biddingPolicy,
+        kPolicy,
       });
     } catch (e: unknown) {
       const err = e as { response?: { data?: { detail?: string } }; message?: string };
@@ -381,10 +396,11 @@ export function MultiplayerLobbyPage({ onReady, onSelfPlay }: Props) {
               </div>
               {waiting.biddingPolicy ? (
                 <div className="info-row">
-                  <span className="info-key">Bot Bidding</span>
+                  <span className="info-key">Bot Settings</span>
                   <span className="info-val policy-value">
                     {waiting.biddingPolicy.mode} ·{" "}
-                    {waiting.biddingPolicy.positionAware ? "position" : "pooled"}
+                    {waiting.biddingPolicy.positionAware ? "position" : "pooled"} ·{" "}
+                    {waiting.kPolicy || "regular"} play
                   </span>
                 </div>
               ) : null}
@@ -463,13 +479,14 @@ export function MultiplayerLobbyPage({ onReady, onSelfPlay }: Props) {
             <details className="bid-settings">
               <summary>
                 <span>
-                  <strong>Bot bidding</strong>
-                  <small>Empirical policy</small>
+                  <strong>Bot settings</strong>
+                  <small>Bidding and play strength</small>
                 </span>
                 <span className="policy-summary">{policyLabel}</span>
               </summary>
 
               <div className="bid-settings-body">
+                <div className="settings-section-label">Bidding style</div>
                 <div className="policy-modes" role="group" aria-label="Bidding preset">
                   {(["aggressive", "optimal", "custom"] as BidPolicyMode[]).map((mode) => (
                     <button
@@ -534,6 +551,36 @@ export function MultiplayerLobbyPage({ onReady, onSelfPlay }: Props) {
                       : "Open 15 ≥67% · open 16 ≥70% · later ≥67% · jump ≥75%"}
                   </p>
                 )}
+
+                <div className="settings-divider" />
+                <div className="play-policy-heading">
+                  <span>
+                    <strong>Play strength</strong>
+                    <small>Controls Rust search breadth</small>
+                  </span>
+                </div>
+                <div
+                  className="policy-modes play-policy-modes"
+                  role="group"
+                  aria-label="Play search strength"
+                >
+                  {(["regular", "aggressive"] as KPolicyMode[]).map((mode) => (
+                    <button
+                      type="button"
+                      key={mode}
+                      className={kPolicy === mode ? "active" : ""}
+                      onClick={() => setKPolicy(mode)}
+                    >
+                      <span>{mode}</span>
+                      <small>
+                        {mode === "regular" ? "2·2·3·3·4·3·2·1" : "3·3·4·4·4·3·2·1"}
+                      </small>
+                    </button>
+                  ))}
+                </div>
+                <p className="preset-note play-note">
+                  Aggressive explores more moves and may take longer.
+                </p>
               </div>
             </details>
 

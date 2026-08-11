@@ -8,6 +8,7 @@ from app.bots.bid_policy import BidPolicyConfig
 from app.engine.cards_adapter import from_card_id, to_card_id
 from app.engine.canonical_key import build_canonical_key_and_mapping
 from app.engine.fixed_deck import load_fixed_deck_cards
+from app.engine.k_policy import KPolicyConfig
 from app.engine.play_engine import init_play_state
 from app.engine.state import GameState
 from app.engine.validator import validate_first4_hands
@@ -24,6 +25,7 @@ class GameManager:
         *,
         starting_bidder_index: int,
         bot_bidding_policy: BidPolicyConfig | None = None,
+        bot_k_policy: KPolicyConfig | None = None,
     ) -> GameState:
         """
         Create a new game with automatic card distribution.
@@ -69,6 +71,7 @@ class GameManager:
             auto_deal=True,  # Flag to indicate auto-deal mode
             fixed_deck_mode=fixed_mode,
             bot_bidding_policy=bot_bidding_policy or BidPolicyConfig.aggressive(),
+            bot_k_policy=bot_k_policy or KPolicyConfig(),
             event_log=[
                 "Game created (auto-deal)."
                 if not fixed_mode
@@ -110,6 +113,7 @@ class GameManager:
         starting_bidder_index: int,
         first4_hands: list[list[str]],
         bot_bidding_policy: BidPolicyConfig | None = None,
+        bot_k_policy: KPolicyConfig | None = None,
     ) -> GameState:
         if starting_bidder_index < 0 or starting_bidder_index > 3:
             raise ValueError("startingBidderIndex must be in 0..3")
@@ -135,6 +139,7 @@ class GameManager:
             draw_pile=remaining,
             fixed_deck_mode=False,
             bot_bidding_policy=bot_bidding_policy or BidPolicyConfig.aggressive(),
+            bot_k_policy=bot_k_policy or KPolicyConfig(),
             event_log=[
                 "Game created (manual first-4).",
                 f"Starting bidder: P{starting_bidder_index + 1}",
@@ -213,6 +218,7 @@ class GameManager:
                 draw_pile=[],
                 auto_deal=True,
                 fixed_deck_mode=False,
+                bot_k_policy=KPolicyConfig(),
                 seat_types=["bot", "bot", "bot", "bot"],
                 player_names=["Bot 1", "Bot 2", "Bot 3", "Bot 4"],
                 event_log=[

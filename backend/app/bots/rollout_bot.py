@@ -850,7 +850,10 @@ def _build_snapshot(state, bot_seat: int) -> dict[str, Any]:
         "bidderSeat": bidder_seat,
         "leaderIndex": state.leaderIndex,
         "catchNumber": state.catchNumber,
-        "k": compute_k(state.catchNumber),
+        "k": compute_k(
+            state.catchNumber,
+            policy=getattr(state, "bot_k_policy", None),
+        ),
         "trumpReveal": state.trumpReveal,
         "knownTrumpSuit": state.trumpSuit if state.trumpReveal else None,
         "chose": state.chose,

@@ -5,6 +5,7 @@ from typing import Literal
 from pydantic import BaseModel, Field, model_validator
 
 from app.bots.bid_policy import BidPolicyConfig, BidThresholds
+from app.engine.k_policy import KPolicyConfig, KPolicyMode
 
 
 class BidThresholdsRequest(BaseModel):
@@ -46,3 +47,7 @@ class BidPolicyRequest(BaseModel):
 
 def resolve_bid_policy(request: BidPolicyRequest | None) -> BidPolicyConfig:
     return request.to_domain() if request is not None else BidPolicyConfig.aggressive()
+
+
+def resolve_k_policy(mode: KPolicyMode | None) -> KPolicyConfig:
+    return KPolicyConfig(mode=mode or "regular")

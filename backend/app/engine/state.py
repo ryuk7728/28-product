@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import Literal, Any, Final
 
 from app.bots.bid_policy import BidPolicyConfig
+from app.engine.k_policy import KPolicyConfig
 from app.legacy.cards import Cards
 from app.settings import settings
 
@@ -127,6 +128,8 @@ class GameState:
 
     # Immutable per-game empirical bidding experiment selected by the host.
     bot_bidding_policy: BidPolicyConfig = field(default_factory=BidPolicyConfig.aggressive)
+    # Immutable per-game rollout search breadth selected by the host.
+    bot_k_policy: KPolicyConfig | None = None
 
     # Self-play data-generation metadata. These fields are unused in normal
     # human/multiplayer games.
@@ -197,6 +200,7 @@ class GameState:
             "autoDeal": self.auto_deal,
             "fixedDeckMode": self.fixed_deck_mode,
             "botBiddingPolicy": self.bot_bidding_policy.to_public_dict(),
+            "botKPolicy": (self.bot_k_policy or KPolicyConfig()).to_public_dict(),
             "bidsR1": self.bids_r1_by_seat,
             "bidsR2": self.bids_r2_by_seat,
             "round1BidderSeat": self.round1_bidder_seat,
