@@ -113,7 +113,7 @@ export default class Layout {
    * @param cardIndex - Which card in hand (0-7 for 28 game)
    * @param totalCards - Total cards in this hand
    */
-  getCardPosition(seatIndex: number, cardIndex: number, _totalCards: number): CardPosition {
+  getCardPosition(seatIndex: number, cardIndex: number): CardPosition {
     const { horizonOffset, verticalOffset } = this.posInfo;
     const isHorizontal = seatIndex === 1 || seatIndex === 3;
 

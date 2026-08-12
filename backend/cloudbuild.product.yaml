@@ -1,0 +1,17 @@
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -f
+      - backend/Dockerfile
+      - -t
+      - us-central1-docker.pkg.dev/$PROJECT_ID/game28-product/game28-product-api:$COMMIT_SHA
+      - -t
+      - us-central1-docker.pkg.dev/$PROJECT_ID/game28-product/game28-product-api:latest
+      - .
+
+images:
+  - us-central1-docker.pkg.dev/$PROJECT_ID/game28-product/game28-product-api:$COMMIT_SHA
+  - us-central1-docker.pkg.dev/$PROJECT_ID/game28-product/game28-product-api:latest
+
+timeout: 2400s

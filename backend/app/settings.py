@@ -86,6 +86,7 @@ class Settings:
     app_dir: Path = Path(__file__).resolve().parent
     backend_dir: Path = app_dir.parent
     debug: bool = _get_bool("APP_DEBUG", True)
+    minimax_strict_rust: bool = _get_bool("APP_MINIMAX_STRICT_RUST", False)
 
     # Rollout bot config
     rollouts: int = _get_int("APP_ROLLOUTS", 200)
@@ -132,8 +133,9 @@ class Settings:
     cors_origins: tuple[str, ...] = (
         "http://localhost:5173",
         "http://127.0.0.1:5173",
-        "https://28-superhuman-ui.vercel.app",
-        "https://28-multiplayer.vercel.app",
+        "http://localhost:4173",
+        "http://127.0.0.1:4173",
+        "https://28-product.vercel.app",
     )
 
 

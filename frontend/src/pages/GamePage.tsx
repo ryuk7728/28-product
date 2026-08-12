@@ -26,10 +26,8 @@ import {
 import { useGameWebSocket } from "../hooks/useGameWebSocket";
 import type { Card as CardType, RematchStatusMessage } from "../api/types";
 import { PLAYER_NAMES, BOT_BID_BUBBLE_DELAY_MS } from "../config/constants";
-import { RoomChat } from "../components/RoomChat";
 import "../styles/index.scss";
 
-const BOT_SEATS = new Set([0, 2]);
 const BID_SOUND_URL = new URL("../../sounds/bid.mp3", import.meta.url).href;
 const BOT_BID_EVENT_RE = /^P([1-4])\s+(bid\s+(\d+)|passed(?:\s+\(R2\))?)\.$/i;
 
@@ -56,8 +54,6 @@ function parseBotBidEvent(logLine: string): { seatIndex: number; text: string } 
   if (!match) return null;
 
   const seatIndex = Number(match[1]) - 1;
-  if (!BOT_SEATS.has(seatIndex)) return null;
-
   const bidAmount = match[3];
   return {
     seatIndex,
@@ -131,7 +127,6 @@ export const GamePage: React.FC<GamePageProps> = ({
   onGameEnd,
 }) => {
   const [selectedCard, setSelectedCard] = useState<string | null>(null);
-  const [showBotCards, setShowBotCards] = useState(false);
   const [abortReason, setAbortReason] = useState<string | null>(null);
   const [botBidBubble, setBotBidBubble] = useState<{
     seatIndex: number;
@@ -148,7 +143,7 @@ export const GamePage: React.FC<GamePageProps> = ({
   const [showTrumpRevealOverlay, setShowTrumpRevealOverlay] = useState(false);
   const [prevTrumpRevealed, setPrevTrumpRevealed] = useState(false);
   const [revealedTrumpInfo, setRevealedTrumpInfo] = useState<{ suit: string; cardId?: string } | null>(null);
-  const [rematchWaitingForSeat, setRematchWaitingForSeat] = useState<number | null>(null);
+  const [rematchWaitingForSeats, setRematchWaitingForSeats] = useState<number[]>([]);
   const [rematchReadySeats, setRematchReadySeats] = useState<number[]>([]);
 
   const {
@@ -172,11 +167,11 @@ export const GamePage: React.FC<GamePageProps> = ({
     },
     onRematchStatus: (msg: RematchStatusMessage) => {
       if (msg.status === "started") {
-        setRematchWaitingForSeat(null);
+        setRematchWaitingForSeats([]);
         setRematchReadySeats([]);
         return;
       }
-      setRematchWaitingForSeat(msg.waitingForSeatIndex ?? null);
+      setRematchWaitingForSeats(msg.waitingForSeatIndices ?? []);
       setRematchReadySeats(msg.readySeatIndices ?? []);
     },
   });
@@ -186,23 +181,26 @@ export const GamePage: React.FC<GamePageProps> = ({
   const finalBidderSeat = gameState?.finalBidderSeat;
   const finalBidValue = gameState?.finalBidValue;
   const playerNamesFromState = gameState?.playerNames ?? PLAYER_NAMES;
+  const authoritativeSeat = gameState?.viewerSeatIndex ?? playerSeatIndex;
 
   const effectiveControlledSeats = useMemo(() => {
     const raw = spectateMode
       ? []
+      : gameState?.viewerSeatIndex !== undefined
+      ? [gameState.viewerSeatIndex]
       : controlledSeatIndices && controlledSeatIndices.length > 0
       ? controlledSeatIndices
       : [1, 3];
     const dedup = Array.from(new Set(raw.map((s) => Number(s))));
     return dedup.filter((s) => s >= 0 && s <= 3);
-  }, [controlledSeatIndices, spectateMode]);
+  }, [controlledSeatIndices, gameState?.viewerSeatIndex, spectateMode]);
 
   const controlledSeatSet = useMemo(
     () => new Set(effectiveControlledSeats),
     [effectiveControlledSeats]
   );
 
-  const primarySeat = effectiveControlledSeats[0] ?? playerSeatIndex;
+  const primarySeat = effectiveControlledSeats[0] ?? authoritativeSeat;
   const isSingleControlledSeat = effectiveControlledSeats.length === 1;
 
   const mapSeatToRenderSeat = useCallback(
@@ -210,10 +208,7 @@ export const GamePage: React.FC<GamePageProps> = ({
       if (!isSingleControlledSeat) {
         return seatIndex;
       }
-      if (primarySeat === 3) {
-        return seatIndex ^ 2;
-      }
-      return seatIndex;
+      return (seatIndex + (1 - primarySeat) + 4) % 4;
     },
     [isSingleControlledSeat, primarySeat]
   );
@@ -233,7 +228,7 @@ export const GamePage: React.FC<GamePageProps> = ({
 
   useEffect(() => {
     if (phase !== "GAME_OVER") {
-      setRematchWaitingForSeat(null);
+      setRematchWaitingForSeats([]);
       setRematchReadySeats([]);
     }
   }, [phase]);
@@ -241,13 +236,6 @@ export const GamePage: React.FC<GamePageProps> = ({
   const getPlayerCards = useCallback(
     (seatIndex: number): CardType[] => {
       return gameState?.players[seatIndex]?.cards || [];
-    },
-    [gameState]
-  );
-
-  const getPlayerDebugCards = useCallback(
-    (seatIndex: number): CardType[] | undefined => {
-      return gameState?.players[seatIndex]?.debugCards;
     },
     [gameState]
   );
@@ -298,7 +286,7 @@ export const GamePage: React.FC<GamePageProps> = ({
     }
 
     const parsed = parseBotBidEvent(logs[lastIndex]);
-    if (!parsed) return;
+    if (!parsed || gameState.seatTypes?.[parsed.seatIndex] !== "bot") return;
 
     processedBotBidEventIndexRef.current = lastIndex;
     setBotBidBubble({ seatIndex: parsed.seatIndex, text: parsed.text });
@@ -521,10 +509,12 @@ export const GamePage: React.FC<GamePageProps> = ({
     };
   }, [gameState, phase, getSeatDisplayName]);
 
-  const biddingTeam = useMemo((): "humans" | "bots" | null => {
+  const localTeam = primarySeat % 2 === 0 ? 1 : 2;
+  const biddingSide = useMemo((): "yours" | "theirs" | null => {
     if (finalBidderSeat === null || finalBidderSeat === undefined) return null;
-    return BOT_SEATS.has(finalBidderSeat) ? "bots" : "humans";
-  }, [finalBidderSeat]);
+    const bidderTeam = finalBidderSeat % 2 === 0 ? 1 : 2;
+    return bidderTeam === localTeam ? "yours" : "theirs";
+  }, [finalBidderSeat, localTeam]);
 
   const humanBidPromptSeat = useMemo<number | null>(() => {
     const isHumanBidPanelVisible =
@@ -586,7 +576,7 @@ export const GamePage: React.FC<GamePageProps> = ({
     if (!gameState) return [];
 
     return [0, 1, 2, 3].map((seatIndex) => {
-      const isBot = selfPlayMode || BOT_SEATS.has(seatIndex);
+      const isBot = selfPlayMode || gameState.seatTypes?.[seatIndex] === "bot";
       const isLocalSeat = controlledSeatSet.has(seatIndex);
       const renderSeatIndex = mapSeatToRenderSeat(seatIndex);
       const isHorizontal = renderSeatIndex === 1 || renderSeatIndex === 3;
@@ -599,10 +589,7 @@ export const GamePage: React.FC<GamePageProps> = ({
         phase === "PLAY" &&
         legalActions?.type === "PLAY_CARD";
 
-      const rawCards =
-        isBot && showBotCards
-          ? getPlayerDebugCards(seatIndex) || getPlayerCards(seatIndex)
-          : getPlayerCards(seatIndex);
+      const rawCards = getPlayerCards(seatIndex);
       const cards = isBot ? rawCards : sortHumanCards(rawCards);
       const playerBid = displayedBidInfo.seat === seatIndex ? displayedBidInfo.value : null;
       const isBidGlow = humanBidPromptSeat === seatIndex && isLocalSeat;
@@ -630,7 +617,7 @@ export const GamePage: React.FC<GamePageProps> = ({
         handContent: (
           <PlayerHand
             cards={cards}
-            faceUp={selfPlayMode || spectateMode || isLocalSeat || (isBot && showBotCards)}
+            faceUp={selfPlayMode || spectateMode || isLocalSeat}
             isHorizontal={isHorizontal}
             isCompact={renderSeatIndex !== 1}
             noOverlap={isLocalSeat}
@@ -655,13 +642,11 @@ export const GamePage: React.FC<GamePageProps> = ({
     controlledSeatSet,
     mapSeatToRenderSeat,
     getPlayerCards,
-    getPlayerDebugCards,
     displayedBidInfo,
     humanBidPromptSeat,
     getSeatDisplayName,
     handleCardClick,
     spectateMode,
-    showBotCards,
     selfPlayMode,
   ]);
 
@@ -871,35 +856,37 @@ export const GamePage: React.FC<GamePageProps> = ({
       );
     }
 
-    const didWin = winnerTeam === 2;
+    const didWin = winnerTeam === localTeam;
     const isRoomRematchFlow = Boolean(roomCode) && Boolean(playerToken) && !spectateMode;
-    const localSeat = effectiveControlledSeats[0] ?? playerSeatIndex;
+    const localSeat = primarySeat;
     const localSeatReady = rematchReadySeats.includes(localSeat);
 
     let rematchStatusMessage: string | null = null;
-    if (isRoomRematchFlow && rematchWaitingForSeat !== null) {
+    if (isRoomRematchFlow && rematchWaitingForSeats.length > 0) {
       if (localSeatReady) {
-        rematchStatusMessage = `Waiting for ${getSeatDisplayName(rematchWaitingForSeat)} to click New Game...`;
+        const names = rematchWaitingForSeats.map(getSeatDisplayName).join(", ");
+        rematchStatusMessage = `Waiting for ${names}…`;
       } else {
-        const waitingSeat = rematchReadySeats.find((seat) => seat !== localSeat);
-        if (typeof waitingSeat === "number") {
-          rematchStatusMessage = `${getSeatDisplayName(waitingSeat)} is waiting for you.`;
-        }
+        rematchStatusMessage = "The others are ready when you are.";
       }
     }
+
+    const yourPoints = localTeam === 1 ? gameState.play.team1Points : gameState.play.team2Points;
+    const theirPoints = localTeam === 1 ? gameState.play.team2Points : gameState.play.team1Points;
+    const bidderTeam = (finalBidderSeat ?? 0) % 2 === 0 ? 1 : 2;
+    const bidderPoints = bidderTeam === 1 ? gameState.play.team1Points : gameState.play.team2Points;
 
     return (
       <GameOverModal
         didWin={didWin}
-        humanScore={0}
-        botScore={0}
-        humanPoints={gameState.play.team2Points}
-        botPoints={gameState.play.team1Points}
+        yourPoints={yourPoints}
+        theirPoints={theirPoints}
         bidValue={finalBidValue || 0}
-        biddingTeam={biddingTeam || "bots"}
+        bidderName={finalBidderSeat == null ? "The bidder" : getSeatDisplayName(finalBidderSeat)}
+        contractMade={bidderPoints >= (finalBidValue || 0)}
         onNewGame={handleNewGame}
         newGameDisabled={isRoomRematchFlow && localSeatReady}
-        newGameLabel={isRoomRematchFlow && localSeatReady ? "Waiting..." : "New Game"}
+        newGameLabel={isRoomRematchFlow && localSeatReady ? "Ready" : "Play again"}
         statusMessage={rematchStatusMessage}
       />
     );
@@ -969,19 +956,15 @@ export const GamePage: React.FC<GamePageProps> = ({
     );
   }
 
-  return (
-    <div>
-      <div className="debug-controls">
-        <label>
-          <input
-            type="checkbox"
-            checked={showBotCards}
-            onChange={(e) => setShowBotCards(e.target.checked)}
-          />
-          Show Bot Cards
-        </label>
-      </div>
+  const partnerSeat = primarySeat ^ 2;
+  const opponentSeats = [0, 1, 2, 3].filter((seat) => seat % 2 !== primarySeat % 2);
+  const yourPoints = localTeam === 1 ? gameState.play?.team1Points || 0 : gameState.play?.team2Points || 0;
+  const theirPoints = localTeam === 1 ? gameState.play?.team2Points || 0 : gameState.play?.team1Points || 0;
 
+  return (
+    <div className="product-game-shell">
+      <div className={`connection-pill ${connected ? "online" : "offline"}`}>{connected ? "Live" : "Reconnecting…"}</div>
+      {roomCode ? <button className="game-room-code" onClick={() => navigator.clipboard.writeText(roomCode)}>Table {roomCode}</button> : null}
       <GameArena
         players={players}
         centerContent={renderCenterContent()}
@@ -1001,13 +984,12 @@ export const GamePage: React.FC<GamePageProps> = ({
         }
         uiPanelScore={
           <ScorePanel
-            humanScore={0}
-            botScore={0}
             currentBid={finalBidValue ?? null}
-            biddingTeam={biddingTeam}
-            humanPoints={gameState.play?.team2Points || 0}
-            botPoints={gameState.play?.team1Points || 0}
-            humanTeamLabel={`${getSeatDisplayName(1)} & ${getSeatDisplayName(3)}`}
+            biddingSide={biddingSide}
+            yourPoints={yourPoints}
+            theirPoints={theirPoints}
+            yourTeamLabel={`You & ${getSeatDisplayName(partnerSeat)}`}
+            theirTeamLabel={`${getSeatDisplayName(opponentSeats[0])} & ${getSeatDisplayName(opponentSeats[1])}`}
           />
         }
         overlay={
@@ -1022,13 +1004,6 @@ export const GamePage: React.FC<GamePageProps> = ({
           )
         }
       />
-      {roomCode && playerToken && !spectateMode ? (
-        <RoomChat
-          roomCode={roomCode}
-          playerToken={playerToken}
-          localSeatIndex={primarySeat}
-        />
-      ) : null}
     </div>
   );
 };

@@ -4,6 +4,8 @@ backend/.env
 frontend/.env
 __pycache__/
 *.pyc
+*-dev.log
+*-dev-err.log
 backend/rollout_crash_dumps
 backend/data/gcp_snapshots/
 backend/data/self_play_results.jsonl

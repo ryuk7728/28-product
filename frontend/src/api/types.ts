@@ -96,21 +96,17 @@ export type RoomJoinResponse = {
   playerToken: string;
   waitingForPlayer: boolean;
   playersJoined: number;
-  botThinkTimeSeconds?: number;
+  targetHumanCount: number;
+  seats: RoomSeat[];
 };
 
-export type ChatMessage = {
-  id: string;
+export type RoomSeat = {
   seatIndex: number;
-  senderName: string;
-  text: string;
-  sentAtEpochMs: number;
+  team: 1 | 2;
+  type: "human" | "bot";
+  name: string;
+  joined: boolean;
 };
-
-export type ChatWsMessage =
-  | { type: "CHAT_HISTORY"; messages: ChatMessage[] }
-  | { type: "CHAT_MESSAGE"; message: ChatMessage }
-  | { type: "ERROR"; message: string };
 
 export type RoomStatusResponse = {
   roomCode: string;
@@ -119,6 +115,8 @@ export type RoomStatusResponse = {
   seatName?: string | null;
   waitingForPlayer: boolean;
   playersJoined: number;
+  targetHumanCount: number;
+  seats: RoomSeat[];
 };
 
 export type LegalActions =
@@ -161,6 +159,6 @@ export type RematchStatusMessage = {
   status: "waiting" | "started";
   requestedBySeatIndex: number;
   readySeatIndices: number[];
-  waitingForSeatIndex: number | null;
+  waitingForSeatIndices: number[];
   startingBidderIndex: number | null;
 };

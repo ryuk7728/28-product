@@ -26,6 +26,120 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+.product-game-shell {
+  position: relative;
+  width: 100%;
+  height: 100svh;
+  overflow: hidden;
+}
+
+.connection-pill,
+.game-room-code {
+  position: fixed;
+  z-index: 300;
+  min-height: 34px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(5, 25, 16, 0.76);
+  color: rgba(255, 255, 255, 0.84);
+  backdrop-filter: blur(12px);
+  font: 600 11px "DM Sans", system-ui, sans-serif;
+}
+
+.connection-pill {
+  top: max(12px, env(safe-area-inset-top));
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+
+  &::before {
+    content: "";
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #62d998;
+  }
+
+  &.offline::before { background: #f0c06a; }
+}
+
+.game-room-code {
+  top: max(12px, env(safe-area-inset-top));
+  right: max(12px, env(safe-area-inset-right));
+  padding: 0 13px;
+  cursor: pointer;
+}
+
+@media (max-width: 700px) {
+  html, body, #root { height: 100%; min-height: 100%; }
+
+  .game-arena {
+    --trick-box-top: 27svh;
+    --trick-box-bottom: 31svh;
+    --trick-box-side: 27vw;
+    height: 100svh;
+    background: radial-gradient(ellipse at 50% 43%, #23633e 0%, #123f2a 48%, #072318 100%);
+  }
+
+  .game-arena::after {
+    content: "";
+    position: absolute;
+    inset: 13% 5% 17%;
+    border: 1px solid rgba(232, 207, 143, .12);
+    border-radius: 45%;
+    pointer-events: none;
+  }
+
+  .player-area.south { bottom: max(8px, env(safe-area-inset-bottom)); }
+  .player-area.north { top: max(55px, calc(env(safe-area-inset-top) + 40px)); }
+  .player-area.west { left: 5px; top: 42%; }
+  .player-area.east { right: 5px; top: 42%; }
+
+  .player-area.west .hand-container,
+  .player-area.east .hand-container { transform: scale(.72); }
+  .player-area.north .hand-container { transform: scale(.76); transform-origin: top center; }
+  .player-area.south .hand-container { transform: scale(.82); transform-origin: bottom center; }
+
+  .player-tag { padding: 4px 9px 4px 5px; font-size: 10px; gap: 5px; }
+  .player-tag .player-avatar { width: 25px; height: 25px; font-size: 10px; }
+  .player-bid { padding: 3px 7px; font-size: 10px; }
+  .thinking-indicator { padding: 4px 8px; font-size: 10px; }
+  .thinking-indicator .dot { width: 4px; height: 4px; }
+
+  .trick-area { border-radius: 14px; min-width: 150px; background: rgba(2, 18, 12, .18); }
+  .trick-area-inner { min-height: 126px; }
+
+  .ui-panel-info { top: max(9px, env(safe-area-inset-top)); left: max(8px, env(safe-area-inset-left)); gap: 5px; transform: scale(.72); transform-origin: top left; }
+  .ui-panel-score { top: max(52px, calc(env(safe-area-inset-top) + 40px)); right: max(7px, env(safe-area-inset-right)); transform: scale(.67); transform-origin: top right; }
+  .score-panel { min-width: 176px; }
+
+  .game-panel { padding: 15px; border-radius: 15px; }
+  .game-panel .panel-title { font-size: 15px; }
+  .game-panel .panel-subtitle { font-size: 11px; margin-bottom: 10px; }
+  .bidding-panel { width: min(86vw, 340px); max-height: 39svh; overflow: auto; }
+  .bidding-panel .bid-grid { gap: 5px; margin-bottom: 9px; }
+  .bidding-panel .bid-btn { width: 43px; height: 43px; border-radius: 9px; font-size: 15px; }
+  .bidding-panel .pass-btn, .bidding-panel .redeal-btn { min-height: 44px; padding: 9px 20px; }
+  .reveal-panel { width: min(86vw, 360px); }
+
+  .game-over-modal { width: calc(100% - 28px); padding: 28px 20px; border-radius: 24px; }
+  .game-over-modal .result-title { font-size: 28px; }
+  .game-over-modal .result-score { display: flex; justify-content: center; gap: 14px; align-items: center; font: 600 42px "Fraunces", Georgia, serif; color: #123a28; }
+  .game-over-modal .result-kicker { margin-bottom: 8px; color: #84968a; font-size: 10px; font-weight: 700; letter-spacing: .16em; }
+
+  .connection-pill { left: 50%; }
+  .game-room-code { font-size: 9px; padding-inline: 9px; }
+}
+
+@media (max-width: 350px) {
+  .player-area.south .hand-container { transform: scale(.72); }
+  .player-area.west .hand-container, .player-area.east .hand-container { transform: scale(.62); }
+  .game-room-code { display: none; }
+}
+
 // Import component styles
 @import "./card.scss";
 @import "./table.scss";
@@ -33,7 +147,6 @@ body {
 @import "./panels.scss";
 @import "./animations.scss";
 @import "./trick.scss";
-@import "./chat.scss";
 
 .self-play-loading {
   display: flex;

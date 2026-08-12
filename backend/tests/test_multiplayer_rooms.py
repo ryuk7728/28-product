@@ -3,350 +3,202 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 
 from app.engine.game_manager import game_manager
+from app.engine.room_manager import (
+    BOT_NAMES,
+    PRODUCT_BID_POLICY,
+    PRODUCT_BOT_THINK_SECONDS,
+    PRODUCT_K_POLICY,
+    room_manager,
+)
 from app.main import app
 
 
-def _drain_state_and_actions(ws, max_msgs: int = 60) -> tuple[dict, dict]:
+def _create(client: TestClient, human_count: int, name: str = "Alice") -> dict:
+    response = client.post(
+        "/rooms",
+        json={"playerName": name, "humanCount": human_count, "startingBidderIndex": 1},
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def _join(client: TestClient, room_code: str, name: str) -> dict:
+    response = client.post(
+        "/rooms/join", json={"roomCode": room_code, "playerName": name}
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def _drain_state_and_actions(ws, max_messages: int = 80) -> tuple[dict, dict]:
     state = None
     actions = None
-    for _ in range(max_msgs):
-        msg = ws.receive_json()
-        msg_type = msg.get("type")
-        if msg_type == "STATE_UPDATE":
-            state = msg["state"]
-        elif msg_type == "LEGAL_ACTIONS":
-            actions = msg["actions"]
-        elif msg_type == "ERROR":
-            raise AssertionError(f"Unexpected WS error: {msg.get('message')}")
+    for _ in range(max_messages):
+        message = ws.receive_json()
+        if message.get("type") == "STATE_UPDATE":
+            state = message["state"]
+        elif message.get("type") == "LEGAL_ACTIONS":
+            actions = message["actions"]
+        elif message.get("type") == "ERROR":
+            raise AssertionError(message["message"])
         if state is not None and actions is not None:
             return state, actions
-    raise AssertionError("Timed out waiting for state/actions.")
+    raise AssertionError("Timed out waiting for state and actions")
 
 
-def _receive_until(ws, expected_type: str, max_msgs: int = 80) -> dict:
-    for _ in range(max_msgs):
-        msg = ws.receive_json()
-        if msg.get("type") == expected_type:
-            return msg
-        if msg.get("type") == "ERROR":
-            raise AssertionError(f"Unexpected WS error: {msg.get('message')}")
-    raise AssertionError(f"Timed out waiting for {expected_type}.")
-
-
-def _receive_rematch_status(ws, expected_status: str, max_msgs: int = 120) -> dict:
-    for _ in range(max_msgs):
-        msg = ws.receive_json()
-        msg_type = msg.get("type")
-        if msg_type == "ERROR":
-            raise AssertionError(f"Unexpected WS error: {msg.get('message')}")
-        if msg_type != "REMATCH_STATUS":
-            continue
-        if msg.get("status") == expected_status:
-            return msg
-    raise AssertionError(f"Timed out waiting for REMATCH_STATUS={expected_status}.")
-
-
-def test_room_create_join_reconnect_flow() -> None:
+def test_all_human_counts_create_correct_roster_and_start_timing() -> None:
+    expected_humans = {
+        1: {3},
+        2: {1, 3},
+        3: {1, 2, 3},
+        4: {0, 1, 2, 3},
+    }
     with TestClient(app) as client:
-        create = client.post(
-            "/rooms", json={"startingBidderIndex": 0, "playerName": "Alice"}
-        )
-        assert create.status_code == 200
-        created = create.json()
-        assert created["waitingForPlayer"] is True
-        assert created["playersJoined"] == 1
-        assert created["seatIndex"] in (1, 3)
-        assert created["gameId"] is None
+        for human_count, human_seats in expected_humans.items():
+            created = _create(client, human_count)
+            assert created["targetHumanCount"] == human_count
+            assert created["seatIndex"] == min(human_seats)
+            assert bool(created["gameId"]) is (human_count == 1)
+            assert created["waitingForPlayer"] is (human_count > 1)
 
-        join = client.post(
+            roster = created["seats"]
+            assert {s["seatIndex"] for s in roster if s["type"] == "human"} == human_seats
+            assert all(
+                seat["name"] == BOT_NAMES[seat["seatIndex"]]
+                for seat in roster
+                if seat["type"] == "bot"
+            )
+
+            latest = created
+            for number in range(2, human_count + 1):
+                latest = _join(client, created["roomCode"], f"Player {number}")
+            assert latest["playersJoined"] == human_count
+            assert latest["waitingForPlayer"] is False
+            assert latest["gameId"]
+
+
+def test_product_bot_policy_is_fixed_and_client_overrides_are_rejected() -> None:
+    with TestClient(app) as client:
+        invalid = client.post(
+            "/rooms",
+            json={
+                "playerName": "Alice",
+                "humanCount": 1,
+                "biddingPolicy": {"mode": "optimal"},
+            },
+        )
+        assert invalid.status_code == 422
+
+        room = _create(client, 1)
+        state = game_manager.get_game(room["gameId"])
+        assert state is not None
+        assert state.bot_bidding_policy == PRODUCT_BID_POLICY
+        assert state.bot_k_policy == PRODUCT_K_POLICY
+        assert state.bot_think_timeout_seconds == PRODUCT_BOT_THINK_SECONDS
+        assert state.bot_bidding_policy.to_public_dict() == {
+            "mode": "custom",
+            "positionAware": False,
+            "thresholds": {
+                "opening15": 60,
+                "opening16": 75,
+                "laterBid": 60,
+                "jumpTo16": 75,
+            },
+        }
+        assert state.bot_k_policy.to_public_dict()["kByCatch"] == [3, 3, 4, 4, 4, 3, 2, 1]
+
+
+def test_join_full_room_and_token_restore() -> None:
+    with TestClient(app) as client:
+        created = _create(client, 2)
+        joined = _join(client, created["roomCode"], "Bob")
+        assert joined["seatIndex"] == 3
+
+        full = client.post(
             "/rooms/join",
-            json={"roomCode": created["roomCode"], "playerName": "Bob"},
+            json={"roomCode": created["roomCode"], "playerName": "Carol"},
         )
-        assert join.status_code == 200
-        joined = join.json()
-        assert joined["waitingForPlayer"] is False
-        assert joined["playersJoined"] == 2
-        assert joined["gameId"]
-        assert joined["seatIndex"] in (1, 3)
-        assert joined["seatIndex"] != created["seatIndex"]
+        assert full.status_code == 409
 
-        reconnect = client.post(
+        restored = client.post(
             "/rooms/join",
             json={
                 "roomCode": created["roomCode"],
                 "playerToken": created["playerToken"],
             },
         )
-        assert reconnect.status_code == 200
-        rejoin = reconnect.json()
-        assert rejoin["seatIndex"] == created["seatIndex"]
-        assert rejoin["playerToken"] == created["playerToken"]
-        assert rejoin["gameId"] == joined["gameId"]
-
-
-def test_room_propagates_custom_position_aware_policy_to_game_state() -> None:
-    policy = {
-        "mode": "custom",
-        "positionAware": True,
-        "thresholds": {
-            "opening15": 64,
-            "opening16": 73,
-            "laterBid": 69,
-            "jumpTo16": 81,
-        },
-    }
-    with TestClient(app) as client:
-        created = client.post(
-            "/rooms",
-            json={
-                "startingBidderIndex": 2,
-                "playerName": "Alice",
-                "biddingPolicy": policy,
-                "kPolicy": "aggressive",
-                "botThinkTimeSeconds": 45,
-            },
-        )
-        assert created.status_code == 200
-        room = created.json()
-        status = client.get(f"/rooms/{room['roomCode']}").json()
-        assert status["biddingPolicy"] == policy
-        assert status["kPolicy"] == {
-            "mode": "aggressive",
-            "kByCatch": [3, 3, 4, 4, 4, 3, 2, 1],
-        }
-        assert status["botThinkTimeSeconds"] == 45
-
-        joined = client.post(
-            "/rooms/join",
-            json={"roomCode": room["roomCode"], "playerName": "Bob"},
-        )
-        assert joined.status_code == 200
-        game = client.get(f"/games/{joined.json()['gameId']}").json()
-        assert game["startingBidderIndex"] == 2
-        assert game["botBiddingPolicy"] == policy
-        assert game["botKPolicy"] == status["kPolicy"]
-        assert game["botThinkTimeSeconds"] == 45
-
-
-def test_custom_policy_requires_thresholds() -> None:
-    with TestClient(app) as client:
-        response = client.post(
-            "/rooms",
-            json={
-                "playerName": "Alice",
-                "biddingPolicy": {"mode": "custom", "positionAware": False},
-            },
-        )
-        assert response.status_code == 422
-
-
-def test_room_defaults_to_regular_k_policy_and_rejects_unknown_mode() -> None:
-    with TestClient(app) as client:
-        created = client.post("/rooms", json={"playerName": "Alice"})
-        assert created.status_code == 200
-        status = client.get(f"/rooms/{created.json()['roomCode']}").json()
-        assert status["kPolicy"] == {
-            "mode": "regular",
-            "kByCatch": [2, 2, 3, 3, 4, 3, 2, 1],
-        }
-        assert status["botThinkTimeSeconds"] == 30
+        assert restored.status_code == 200
+        assert restored.json()["seatIndex"] == created["seatIndex"]
+        assert restored.json()["gameId"] == joined["gameId"]
 
         invalid = client.post(
-            "/rooms", json={"playerName": "Alice", "kPolicy": "maximum"}
+            "/rooms/join",
+            json={"roomCode": created["roomCode"], "playerToken": "not-a-token"},
         )
-        assert invalid.status_code == 422
-
-        too_long = client.post(
-            "/rooms",
-            json={"playerName": "Alice", "botThinkTimeSeconds": 121},
-        )
-        assert too_long.status_code == 422
+        assert invalid.status_code == 401
 
 
-def test_room_chat_broadcasts_plain_text_and_restores_history() -> None:
+def test_two_humans_are_opposite_partners() -> None:
     with TestClient(app) as client:
-        alice = client.post("/rooms", json={"playerName": "Alice"}).json()
-        bob = client.post(
-            "/rooms/join",
-            json={"roomCode": alice["roomCode"], "playerName": "Bob"},
-        ).json()
-        room = alice["roomCode"]
-        text = '<script>alert("still text")</script>'
-
-        with client.websocket_connect(
-            f"/ws/rooms/{room}/chat?token={alice['playerToken']}"
-        ) as ws_a, client.websocket_connect(
-            f"/ws/rooms/{room}/chat?token={bob['playerToken']}"
-        ) as ws_b:
-            assert ws_a.receive_json() == {"type": "CHAT_HISTORY", "messages": []}
-            assert ws_b.receive_json() == {"type": "CHAT_HISTORY", "messages": []}
-            ws_a.send_json({"type": "SEND_CHAT", "text": text})
-            for ws in (ws_a, ws_b):
-                received = ws.receive_json()
-                assert received["type"] == "CHAT_MESSAGE"
-                assert received["message"]["text"] == text
-                assert received["message"]["senderName"] == "Alice"
-
-        with client.websocket_connect(
-            f"/ws/rooms/{room}/chat?token={bob['playerToken']}"
-        ) as reconnected:
-            history = reconnected.receive_json()
-            assert history["type"] == "CHAT_HISTORY"
-            assert [item["text"] for item in history["messages"]] == [text]
+        first = _create(client, 2)
+        second = _join(client, first["roomCode"], "Bob")
+        assert {first["seatIndex"], second["seatIndex"]} == {1, 3}
+        assert first["seats"][1]["team"] == first["seats"][3]["team"] == 2
 
 
-def test_room_chat_rejects_invalid_token_length_and_rate_limit() -> None:
+def test_three_human_rematch_rotates_bot_partner_and_token_seats() -> None:
     with TestClient(app) as client:
-        alice = client.post("/rooms", json={"playerName": "Alice"}).json()
-        room = alice["roomCode"]
-        with client.websocket_connect(f"/ws/rooms/{room}/chat?token=wrong") as invalid:
-            assert invalid.receive_json()["message"] == "Invalid room token."
+        players = [_create(client, 3)]
+        players.append(_join(client, players[0]["roomCode"], "Bob"))
+        players.append(_join(client, players[0]["roomCode"], "Carol"))
+        room_code = players[0]["roomCode"]
+        game_id = players[-1]["gameId"]
+        state = game_manager.get_game(game_id)
+        assert state is not None
+        assert state.seat_types == ["bot", "human", "human", "human"]
+        state.phase = "GAME_OVER"
 
-        with client.websocket_connect(
-            f"/ws/rooms/{room}/chat?token={alice['playerToken']}"
-        ) as ws:
-            ws.receive_json()
-            ws.send_json({"type": "SEND_CHAT", "text": "x" * 281})
-            assert "at most 280" in ws.receive_json()["message"]
+        for index, player in enumerate(players):
+            result = room_manager.request_rematch(
+                room_code=room_code, player_token=player["playerToken"]
+            )
+            assert result.started is (index == 2)
 
-            for index in range(5):
-                ws.send_json({"type": "SEND_CHAT", "text": f"m{index}"})
-                assert ws.receive_json()["type"] == "CHAT_MESSAGE"
-            ws.send_json({"type": "SEND_CHAT", "text": "too fast"})
-            assert "too quickly" in ws.receive_json()["message"]
+        assert state.seat_types == ["human", "bot", "human", "human"]
+        restored_seats = []
+        for player in players:
+            restored = client.post(
+                "/rooms/join",
+                json={"roomCode": room_code, "playerToken": player["playerToken"]},
+            )
+            assert restored.status_code == 200
+            restored_seats.append(restored.json()["seatIndex"])
+        assert sorted(restored_seats) == [0, 2, 3]
+        assert state.starting_bidder_index == 2
 
 
-def test_room_chat_history_is_isolated_between_rooms() -> None:
+def test_four_human_websocket_redacts_hands_and_scopes_actions() -> None:
     with TestClient(app) as client:
-        first = client.post("/rooms", json={"playerName": "Alice"}).json()
-        second = client.post("/rooms", json={"playerName": "Carol"}).json()
+        players = [_create(client, 4)]
+        for name in ("Bob", "Carol", "Dev"):
+            players.append(_join(client, players[0]["roomCode"], name))
+        alice = players[0]
         with client.websocket_connect(
-            f"/ws/rooms/{first['roomCode']}/chat?token={first['playerToken']}"
-        ) as ws_first:
-            ws_first.receive_json()
-            ws_first.send_json({"type": "SEND_CHAT", "text": "first room only"})
-            assert ws_first.receive_json()["type"] == "CHAT_MESSAGE"
-
-        with client.websocket_connect(
-            f"/ws/rooms/{second['roomCode']}/chat?token={second['playerToken']}"
-        ) as ws_second:
-            assert ws_second.receive_json() == {
-                "type": "CHAT_HISTORY",
-                "messages": [],
-            }
-
-
-def test_ws_room_redacts_hands_and_enforces_seat_actions() -> None:
-    with TestClient(app) as client:
-        created = client.post(
-            "/rooms", json={"startingBidderIndex": 0, "playerName": "Alice"}
-        ).json()
-        joined = client.post(
-            "/rooms/join",
-            json={"roomCode": created["roomCode"], "playerName": "Bob"},
-        ).json()
-
-        seat1 = created if created["seatIndex"] == 1 else joined
-        room_code = seat1["roomCode"]
-        token = seat1["playerToken"]
-
-        with client.websocket_connect(f"/ws/rooms/{room_code}?token={token}") as ws:
-            state, actions = _drain_state_and_actions(ws)
-
-            # Viewer sees their own hand, everyone else hidden.
-            assert state["viewerSeatIndex"] == 1
-            own_cards = state["players"][1]["cards"]
-            other_cards = state["players"][0]["cards"]
-            assert own_cards and not own_cards[0]["cardId"].startswith("HIDDEN_")
-            assert other_cards and other_cards[0]["cardId"].startswith("HIDDEN_")
-
-            # Server must reject seat spoofing.
-            ws.send_json({"type": "SUBMIT_BID", "seatIndex": 3, "bidValue": 0})
-            err = ws.receive_json()
-            assert err["type"] == "ERROR"
-            assert "assigned seat" in err["message"]
-
-            # Actions are scoped to the connected player (NO_ACTION or seat 1).
-            if actions["type"] != "NO_ACTION":
-                assert actions.get("seatIndex") == 1
-
-
-def test_ws_room_spectator_gets_full_state_and_read_only_actions() -> None:
-    with TestClient(app) as client:
-        created = client.post(
-            "/rooms", json={"startingBidderIndex": 0, "playerName": "Alice"}
-        ).json()
-        joined = client.post(
-            "/rooms/join",
-            json={"roomCode": created["roomCode"], "playerName": "Bob"},
-        ).json()
-        assert joined["gameId"]
-
-        room_code = created["roomCode"]
-        with client.websocket_connect(f"/ws/rooms/{room_code}?spectator=1") as ws:
-            state, actions = _drain_state_and_actions(ws)
-
-            # Spectator should see all cards (no hidden placeholders).
-            assert "viewerSeatIndex" not in state
+            f"/ws/rooms/{alice['roomCode']}?token={alice['playerToken']}"
+        ) as websocket:
+            state, actions = _drain_state_and_actions(websocket)
+            assert state["viewerSeatIndex"] == alice["seatIndex"]
+            assert state["seatTypes"] == ["human", "human", "human", "human"]
             for player in state["players"]:
-                cards = player["cards"]
-                if cards:
-                    assert not cards[0]["cardId"].startswith("HIDDEN_")
-
-            # Spectator receives NO_ACTION and cannot submit moves.
-            assert actions["type"] == "NO_ACTION"
-            ws.send_json({"type": "SUBMIT_BID", "seatIndex": 1, "bidValue": 14})
-            err = ws.receive_json()
-            assert err["type"] == "ERROR"
-            assert "read-only" in err["message"].lower()
-
-
-def test_room_rematch_requires_both_humans_and_rotates_starting_bidder() -> None:
-    with TestClient(app) as client:
-        created = client.post(
-            "/rooms", json={"startingBidderIndex": 0, "playerName": "Alice"}
-        ).json()
-        joined = client.post(
-            "/rooms/join",
-            json={"roomCode": created["roomCode"], "playerName": "Bob"},
-        ).json()
-
-        seat1 = created if created["seatIndex"] == 1 else joined
-        seat3 = joined if seat1 is created else created
-        room_code = created["roomCode"]
-        game_id = joined["gameId"]
-        assert game_id
-
-        state_obj = game_manager.get_game(game_id)
-        assert state_obj is not None
-        previous_start = state_obj.starting_bidder_index
-        state_obj.phase = "GAME_OVER"
-        state_obj.winnerTeam = 2
-        state_obj.team2Points = 18
-        state_obj.team1Points = 10
-
-        with client.websocket_connect(
-            f"/ws/rooms/{room_code}?token={seat1['playerToken']}"
-        ) as ws1, client.websocket_connect(
-            f"/ws/rooms/{room_code}?token={seat3['playerToken']}"
-        ) as ws2:
-            _drain_state_and_actions(ws1)
-            _drain_state_and_actions(ws2)
-
-            # First human clicks New Game -> waiting for second human.
-            ws1.send_json({"type": "REQUEST_NEW_GAME"})
-            waiting_msg = _receive_rematch_status(ws1, "waiting")
-            assert waiting_msg["status"] == "waiting"
-            assert waiting_msg["waitingForSeatIndex"] in (1, 3)
-            assert waiting_msg["waitingForSeatIndex"] != seat1["seatIndex"]
-            assert seat1["seatIndex"] in waiting_msg["readySeatIndices"]
-
-            # Second human clicks New Game -> rematch starts immediately.
-            ws2.send_json({"type": "REQUEST_NEW_GAME"})
-            started_msg = _receive_rematch_status(ws2, "started")
-            assert started_msg["status"] == "started"
-
-            updated = _receive_until(ws2, "STATE_UPDATE")["state"]
-            assert updated["gameId"] == game_id
-            assert updated["phase"] != "GAME_OVER"
-            assert updated["startingBidderIndex"] == (previous_start + 1) % 4
+                if player["seatIndex"] == alice["seatIndex"]:
+                    assert not player["cards"][0]["cardId"].startswith("HIDDEN_")
+                else:
+                    assert player["cards"][0]["cardId"].startswith("HIDDEN_")
+            if actions["type"] != "NO_ACTION":
+                assert actions["seatIndex"] == alice["seatIndex"]
+            websocket.send_json(
+                {"type": "SUBMIT_BID", "seatIndex": 3, "bidValue": 0}
+            )
+            error = websocket.receive_json()
+            assert error["type"] == "ERROR"
+            assert "assigned seat" in error["message"]

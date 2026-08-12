@@ -15,6 +15,14 @@ from app.api.ws import router as ws_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Product deployments must never silently fall back to the Python minimax.
+    # The import is delayed until process startup so container environment
+    # variables have already selected the production backend.
+    from app.legacy.minimax import strict_rust_smoke_test
+
+    if settings.minimax_strict_rust:
+        strict_rust_smoke_test()
+
     # Process pool for multiprocessing rollouts
     app.state.process_pool = ProcessPoolExecutor(max_workers=settings.workers)
 
@@ -26,7 +34,7 @@ async def lifespan(app: FastAPI):
     app.state.process_pool.shutdown(wait=True, cancel_futures=True)
 
 
-app = FastAPI(title="28 Game Server", debug=settings.debug, lifespan=lifespan)
+app = FastAPI(title="Twenty-Eight Game Server", debug=settings.debug, lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

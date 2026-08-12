@@ -50,12 +50,15 @@ export function useGameWebSocket(
 
   const wsRef = useRef<WebSocket | null>(null);
   const [connected, setConnected] = useState(false);
+  const [reconnectAttempt, setReconnectAttempt] = useState(0);
   const [gameState, setGameState] = useState<GameState | null>(null);
   const [legalActions, setLegalActions] = useState<LegalActions | null>(null);
 
   // Store callbacks in refs to avoid triggering reconnections
   const callbacksRef = useRef(options);
-  callbacksRef.current = options;
+  useEffect(() => {
+    callbacksRef.current = options;
+  }, [options]);
 
   // Connect to WebSocket - only depends on gameId
   useEffect(() => {
@@ -88,7 +91,7 @@ export function useGameWebSocket(
     } else {
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
       const host = window.location.hostname;
-      const port = 8000; // Backend port
+      const port = 8100; // Isolated local product backend
       if (roomCode) {
         if (spectateMode) {
           wsUrl = `${protocol}//${host}:${port}/ws/rooms/${encodeURIComponent(roomCode)}?spectator=1`;
@@ -115,10 +118,19 @@ export function useGameWebSocket(
       callbacksRef.current.onConnectionChange?.(true);
     };
 
+    let retryTimer: number | null = null;
+    let disposed = false;
+
     ws.onclose = () => {
       console.log("[WS] Disconnected");
       setConnected(false);
       callbacksRef.current.onConnectionChange?.(false);
+      if (!disposed) {
+        retryTimer = window.setTimeout(
+          () => setReconnectAttempt((attempt) => attempt + 1),
+          1200
+        );
+      }
     };
 
     ws.onerror = (error) => {
@@ -165,13 +177,15 @@ export function useGameWebSocket(
     };
 
     return () => {
+      disposed = true;
+      if (retryTimer !== null) window.clearTimeout(retryTimer);
       console.log("[WS] Cleaning up connection");
       if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
         ws.close();
       }
       wsRef.current = null;
     };
-  }, [gameId, roomCode, playerToken, spectateMode, selfPlayMode]); // Reconnect when connection identity changes
+  }, [gameId, roomCode, playerToken, spectateMode, selfPlayMode, reconnectAttempt]);
 
   // Send message helper
   const sendMessage = useCallback((msg: object) => {

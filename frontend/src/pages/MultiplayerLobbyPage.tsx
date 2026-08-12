@@ -1,270 +1,138 @@
 import { useEffect, useMemo, useState } from "react";
 import { http } from "../api/http";
-import { PLAYER_NAMES } from "../config/constants";
-import type {
-  BidPolicy,
-  BidPolicyMode,
-  BidThresholds,
-  KPolicyMode,
-  RoomJoinResponse,
-  RoomStatusResponse,
-} from "../api/types";
-import "../styles/multiplayer-lobby.scss";
+import type { RoomJoinResponse, RoomSeat, RoomStatusResponse } from "../api/types";
+import "../styles/product-lobby.scss";
 
-export type MultiplayerSession =
-  | {
-      roomCode: string;
-      gameId: string;
-      mode: "player";
-      seatIndex: number;
-      playerToken: string;
-    }
-  | {
-      roomCode: string;
-      gameId: string;
-      mode: "spectator";
-    };
-
-type Props = {
-  onReady: (session: MultiplayerSession) => void;
-  onSelfPlay?: () => void;
+export type MultiplayerSession = {
+  roomCode: string;
+  gameId: string;
+  seatIndex: number;
+  playerToken: string;
 };
+
+type Props = { onReady: (session: MultiplayerSession) => void };
 
 type WaitingState = {
   roomCode: string;
-  mode: "player" | "spectator";
-  seatIndex?: number;
-  playerToken?: string;
+  gameId: string | null;
+  seatIndex: number;
+  playerToken: string;
   playersJoined: number;
-  biddingPolicy?: BidPolicy;
-  kPolicy?: KPolicyMode;
-  botThinkTimeSeconds?: number;
+  targetHumanCount: number;
+  seats: RoomSeat[];
 };
 
-const BID_POLICY_STORAGE_KEY = "bot_bidding_policy_v1";
-const K_POLICY_STORAGE_KEY = "bot_k_policy_v1";
-const BOT_THINK_TIME_STORAGE_KEY = "bot_think_time_seconds_v1";
-const DEFAULT_CUSTOM_THRESHOLDS: BidThresholds = {
-  opening15: 67,
-  opening16: 70,
-  laterBid: 67,
-  jumpTo16: 75,
-};
+const NAME_KEY = "28_product_player_name";
 
-function loadBidPolicy(): BidPolicy {
-  try {
-    const stored = JSON.parse(
-      localStorage.getItem(BID_POLICY_STORAGE_KEY) || "null"
-    ) as BidPolicy | null;
-    if (
-      stored &&
-      ["aggressive", "optimal", "custom"].includes(stored.mode) &&
-      typeof stored.positionAware === "boolean"
-    ) {
-      return {
-        mode: stored.mode,
-        positionAware: stored.positionAware,
-        thresholds: { ...DEFAULT_CUSTOM_THRESHOLDS, ...stored.thresholds },
-      };
-    }
-  } catch {
-    // Ignore malformed local preferences and restore the safe default.
-  }
-  return {
-    mode: "aggressive",
-    positionAware: false,
-    thresholds: DEFAULT_CUSTOM_THRESHOLDS,
-  };
+function tokenKey(code: string) {
+  return `28_product_room_${code.toUpperCase()}`;
 }
 
-function loadKPolicy(): KPolicyMode {
-  const stored = localStorage.getItem(K_POLICY_STORAGE_KEY);
-  return stored === "aggressive" ? "aggressive" : "regular";
+function normalizeCode(value: string) {
+  return value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6);
 }
 
-function loadBotThinkTime(): number {
-  const stored = Number(localStorage.getItem(BOT_THINK_TIME_STORAGE_KEY));
-  return Number.isFinite(stored) && stored >= 1 && stored <= 120 ? stored : 30;
+function messageForError(error: unknown, fallback: string) {
+  const typed = error as { response?: { data?: { detail?: string } }; message?: string };
+  return String(typed.response?.data?.detail ?? typed.message ?? fallback);
 }
 
-function tokenStorageKey(roomCode: string): string {
-  return `room_token_${roomCode.toUpperCase()}`;
+function TablePreview({ seats, ownSeat }: { seats: RoomSeat[]; ownSeat: number }) {
+  return (
+    <div className="seat-map" aria-label="Table seats and teams">
+      {seats.map((seat) => (
+        <div
+          key={seat.seatIndex}
+          className={`seat-card seat-${seat.seatIndex} ${seat.joined ? "filled" : "empty"}`}
+        >
+          <span className={`seat-avatar ${seat.type}`}>{seat.type === "bot" ? "✦" : seat.name[0]?.toUpperCase()}</span>
+          <span className="seat-name">
+            {seat.seatIndex === ownSeat ? "You" : seat.name}
+          </span>
+          <span className="seat-meta">Team {seat.team}</span>
+        </div>
+      ))}
+      <div className="seat-map-center">
+        <span>Partners sit</span>
+        <strong>opposite</strong>
+      </div>
+    </div>
+  );
 }
 
-export function MultiplayerLobbyPage({ onReady, onSelfPlay }: Props) {
-  const [createPlayerName, setCreatePlayerName] = useState("");
-  const [joinPlayerName, setJoinPlayerName] = useState("");
-  const [joinCode, setJoinCode] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+export function MultiplayerLobbyPage({ onReady }: Props) {
+  const inviteCode = useMemo(
+    () => normalizeCode(new URLSearchParams(window.location.search).get("room") ?? ""),
+    []
+  );
+  const [name, setName] = useState(() => localStorage.getItem(NAME_KEY) ?? "");
+  const [humanCount, setHumanCount] = useState(1);
+  const [joinCode, setJoinCode] = useState(inviteCode);
+  const [view, setView] = useState<"home" | "join">(inviteCode ? "join" : "home");
   const [waiting, setWaiting] = useState<WaitingState | null>(null);
-  const [copied, setCopied] = useState(false);
-  const [biddingPolicy, setBiddingPolicy] = useState<BidPolicy>(loadBidPolicy);
-  const [kPolicy, setKPolicy] = useState<KPolicyMode>(loadKPolicy);
-  const [botThinkTimeSeconds, setBotThinkTimeSeconds] = useState(loadBotThinkTime);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [copied, setCopied] = useState<"code" | "link" | null>(null);
 
-  useEffect(() => {
-    localStorage.setItem(BID_POLICY_STORAGE_KEY, JSON.stringify(biddingPolicy));
-  }, [biddingPolicy]);
-
-  useEffect(() => {
-    localStorage.setItem(K_POLICY_STORAGE_KEY, kPolicy);
-  }, [kPolicy]);
-
-  useEffect(() => {
-    localStorage.setItem(BOT_THINK_TIME_STORAGE_KEY, String(botThinkTimeSeconds));
-  }, [botThinkTimeSeconds]);
-
-  const setPolicyMode = (mode: BidPolicyMode) => {
-    setBiddingPolicy((current) => ({ ...current, mode }));
-  };
-
-  const setCustomThreshold = (field: keyof BidThresholds, rawValue: string) => {
-    const value = Math.max(0, Math.min(100, Number(rawValue) || 0));
-    setBiddingPolicy((current) => ({
-      ...current,
-      thresholds: {
-        ...DEFAULT_CUSTOM_THRESHOLDS,
-        ...current.thresholds,
-        [field]: value,
-      },
-    }));
-  };
-
-  const policyLabel = `${
-    biddingPolicy.mode[0].toUpperCase() + biddingPolicy.mode.slice(1)
-  } bid · ${kPolicy === "aggressive" ? "Aggressive" : "Regular"} play · ${botThinkTimeSeconds}s`;
-
-  const normalizedJoinCode = useMemo(() => joinCode.trim().toUpperCase(), [joinCode]);
-  const existingJoinToken = useMemo(() => {
-    if (!normalizedJoinCode) return null;
-    return localStorage.getItem(tokenStorageKey(normalizedJoinCode));
-  }, [normalizedJoinCode]);
-
-  const persistToken = (roomCode: string, playerToken: string) => {
-    localStorage.setItem(tokenStorageKey(roomCode), playerToken);
-  };
-
-  const completePlayerIfReady = (payload: {
-    roomCode: string;
-    gameId: string | null;
-    seatIndex: number;
-    playerToken: string;
-  }) => {
-    if (!payload.gameId) {
-      return false;
-    }
+  const finish = (payload: WaitingState) => {
+    if (!payload.gameId) return false;
     onReady({
       roomCode: payload.roomCode,
       gameId: payload.gameId,
-      mode: "player",
       seatIndex: payload.seatIndex,
       playerToken: payload.playerToken,
     });
     return true;
   };
 
-  async function createRoom() {
-    setError(null);
+  const remember = (payload: RoomJoinResponse) => {
+    localStorage.setItem(NAME_KEY, name.trim());
+    localStorage.setItem(
+      tokenKey(payload.roomCode),
+      JSON.stringify({ token: payload.playerToken, name: payload.seatName })
+    );
+    const next: WaitingState = payload;
+    if (!finish(next)) setWaiting(next);
+  };
+
+  async function createTable() {
+    if (!name.trim()) return setError("Enter your name to continue.");
     setLoading(true);
+    setError(null);
     try {
-      const res = await http.post<RoomJoinResponse>("/rooms", {
-        playerName: createPlayerName.trim(),
-        biddingPolicy,
-        kPolicy,
-        botThinkTimeSeconds,
+      const response = await http.post<RoomJoinResponse>("/rooms", {
+        playerName: name.trim(),
+        humanCount,
       });
-      const data = res.data;
-      persistToken(data.roomCode, data.playerToken);
-
-      if (completePlayerIfReady(data)) return;
-
-      setWaiting({
-        roomCode: data.roomCode,
-        mode: "player",
-        seatIndex: data.seatIndex,
-        playerToken: data.playerToken,
-        playersJoined: data.playersJoined,
-        biddingPolicy,
-        kPolicy,
-        botThinkTimeSeconds,
-      });
-    } catch (e: unknown) {
-      const err = e as { response?: { data?: { detail?: string } }; message?: string };
-      const msg = err?.response?.data?.detail ?? err?.message ?? "Failed to create room";
-      setError(String(msg));
+      remember(response.data);
+    } catch (caught) {
+      setError(messageForError(caught, "We couldn't create the table."));
     } finally {
       setLoading(false);
     }
   }
 
-  async function joinRoom(useStoredToken: boolean) {
-    if (!normalizedJoinCode) {
-      setError("Enter a room code.");
-      return;
-    }
-    if (!useStoredToken && !joinPlayerName.trim()) {
-      setError("Enter your name.");
-      return;
-    }
-    setError(null);
+  async function joinTable() {
+    const code = normalizeCode(joinCode);
+    if (code.length !== 6) return setError("Enter the six-character table code.");
+    if (!name.trim()) return setError("Enter your name to continue.");
     setLoading(true);
-    try {
-      const res = await http.post<RoomJoinResponse>("/rooms/join", {
-        roomCode: normalizedJoinCode,
-        playerToken: useStoredToken ? existingJoinToken || null : null,
-        playerName: useStoredToken ? null : joinPlayerName.trim(),
-      });
-      const data = res.data;
-      persistToken(data.roomCode, data.playerToken);
-
-      if (completePlayerIfReady(data)) return;
-
-      setWaiting({
-        roomCode: data.roomCode,
-        mode: "player",
-        seatIndex: data.seatIndex,
-        playerToken: data.playerToken,
-        playersJoined: data.playersJoined,
-      });
-    } catch (e: unknown) {
-      const err = e as { response?: { data?: { detail?: string } }; message?: string };
-      const msg = err?.response?.data?.detail ?? err?.message ?? "Failed to join room";
-      setError(String(msg));
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function spectateRoom() {
-    if (!normalizedJoinCode) {
-      setError("Enter a room code.");
-      return;
-    }
     setError(null);
-    setLoading(true);
     try {
-      const res = await http.get<RoomStatusResponse>(`/rooms/${normalizedJoinCode}`);
-      const status = res.data;
-
-      if (status.gameId) {
-        onReady({
-          roomCode: normalizedJoinCode,
-          gameId: status.gameId,
-          mode: "spectator",
-        });
-        return;
+      let saved: { token?: string } | null = null;
+      try {
+        saved = JSON.parse(localStorage.getItem(tokenKey(code)) ?? "null");
+      } catch {
+        localStorage.removeItem(tokenKey(code));
       }
-
-      setWaiting({
-        roomCode: normalizedJoinCode,
-        mode: "spectator",
-        playersJoined: status.playersJoined,
+      const response = await http.post<RoomJoinResponse>("/rooms/join", {
+        roomCode: code,
+        playerName: name.trim(),
+        playerToken: saved?.token ?? null,
       });
-    } catch (e: unknown) {
-      const err = e as { response?: { data?: { detail?: string } }; message?: string };
-      const msg = err?.response?.data?.detail ?? err?.message ?? "Failed to spectate room";
-      setError(String(msg));
+      remember(response.data);
+    } catch (caught) {
+      setError(messageForError(caught, "We couldn't join that table."));
     } finally {
       setLoading(false);
     }
@@ -272,441 +140,124 @@ export function MultiplayerLobbyPage({ onReady, onSelfPlay }: Props) {
 
   useEffect(() => {
     if (!waiting) return;
-    setCopied(false);
-    const interval = window.setInterval(async () => {
+    const poll = window.setInterval(async () => {
       try {
-        const params =
-          waiting.mode === "player" && waiting.playerToken
-            ? { playerToken: waiting.playerToken }
-            : undefined;
-        const res = await http.get<RoomStatusResponse>(`/rooms/${waiting.roomCode}`, {
-          params,
+        const response = await http.get<RoomStatusResponse>(`/rooms/${waiting.roomCode}`, {
+          params: { playerToken: waiting.playerToken },
         });
-        const status = res.data;
-        setWaiting((prev) =>
-          prev
-            ? {
-                ...prev,
-                playersJoined: status.playersJoined,
-              }
-            : prev
-        );
-
-        if (status.gameId) {
-          if (waiting.mode === "player" && waiting.seatIndex !== undefined && waiting.playerToken) {
-            onReady({
-              roomCode: waiting.roomCode,
-              gameId: status.gameId,
-              mode: "player",
-              seatIndex: waiting.seatIndex,
-              playerToken: waiting.playerToken,
-            });
-          } else {
-            onReady({
-              roomCode: waiting.roomCode,
-              gameId: status.gameId,
-              mode: "spectator",
-            });
-          }
-        }
-      } catch {
-        // Silent retry while waiting.
+        const next: WaitingState = {
+          ...waiting,
+          ...response.data,
+          seatIndex: response.data.seatIndex ?? waiting.seatIndex,
+        };
+        if (!finish(next)) setWaiting(next);
+      } catch (caught) {
+        setError(messageForError(caught, "The table is no longer available."));
       }
-    }, 2000);
-
-    return () => window.clearInterval(interval);
+    }, 1200);
+    return () => window.clearInterval(poll);
+    // `waiting` intentionally drives the polling lifecycle; `finish` is a small
+    // render-local adapter whose behavior is represented by `onReady`.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [waiting, onReady]);
 
-  async function copyRoomCode() {
+  const inviteLink = waiting
+    ? `${window.location.origin}${window.location.pathname}?room=${waiting.roomCode}`
+    : "";
+
+  async function copy(value: string, type: "code" | "link") {
+    await navigator.clipboard.writeText(value);
+    setCopied(type);
+    window.setTimeout(() => setCopied(null), 1600);
+  }
+
+  async function share() {
     if (!waiting) return;
-
-    try {
-      await navigator.clipboard.writeText(waiting.roomCode);
-    } catch {
-      const el = document.createElement("textarea");
-      el.value = waiting.roomCode;
-      document.body.appendChild(el);
-      el.select();
-      document.execCommand("copy");
-      document.body.removeChild(el);
+    if (navigator.share) {
+      await navigator.share({
+        title: "Join my Twenty-Eight table",
+        text: `Join my Twenty-Eight game. Table code: ${waiting.roomCode}`,
+        url: inviteLink,
+      });
+    } else {
+      await copy(inviteLink, "link");
     }
-
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 2200);
   }
 
   if (waiting) {
     return (
-      <div className="mp-shell">
-        <div className="felt-bg" />
-        <div className="table-ring" />
-        <div className="floating-cards" aria-hidden>
-          <div className="card-deco red" data-suit="♥">J</div>
-          <div className="card-deco black" data-suit="♠">A</div>
-          <div className="card-deco red" data-suit="♦">Q</div>
-          <div className="card-deco black" data-suit="♣">K</div>
-          <div className="card-deco black" data-suit="♣">9</div>
-          <div className="card-deco red" data-suit="♥">10</div>
-          <div className="card-deco red" data-suit="♦">8</div>
-          <div className="card-deco black" data-suit="♠">7</div>
-        </div>
-
-        <div className="stage room-stage">
-          <div className="ornament">
-            <div className="ornament-line" />
-            <span className="ornament-suit">♠</span>
-            <div className="ornament-diamond" />
-            <span className="ornament-suit">♥</span>
-            <div className="ornament-line r" />
-          </div>
-
-          <div className="room-panel">
-            <div className="panel-eyebrow">Waiting for Players</div>
-            <div className="panel-title">Room Created</div>
-            <p className="panel-sub">
-              {waiting.mode === "player"
-                ? "Share this code. Game starts when second human joins."
-                : "Waiting for both players. Spectator view unlocks once the game starts."}
-            </p>
-            <div className="rule" />
-
-            <div className="code-label">Room Code</div>
-            <div className="code-display">{waiting.roomCode}</div>
-
-            <button className={`btn-copy ${copied ? "copied" : ""}`} onClick={copyRoomCode}>
-              <span className="label-default">Copy Code</span>
-              <span className="label-copied">
-                <span className="tick-circle">✓</span>
-                Copied!
-              </span>
+      <main className="product-shell waiting-shell">
+        <div className="ambient ambient-one" />
+        <section className="waiting-card">
+          <header className="product-brand compact"><span>28</span><b>Twenty-Eight</b></header>
+          <div className="waiting-kicker">Your table is ready</div>
+          <button className="room-code" onClick={() => copy(waiting.roomCode, "code")}>
+            <span>Table code</span>
+            <strong>{waiting.roomCode.slice(0, 3)} {waiting.roomCode.slice(3)}</strong>
+            <small>{copied === "code" ? "Copied" : "Tap to copy"}</small>
+          </button>
+          <div className="share-actions">
+            <button className="primary-action" onClick={share}>Share invite</button>
+            <button className="quiet-action" onClick={() => copy(inviteLink, "link")}>
+              {copied === "link" ? "Link copied" : "Copy link"}
             </button>
-
-            <div className="info-block">
-              {waiting.mode === "player" && waiting.seatIndex !== undefined ? (
-                <div className="info-row">
-                  <span className="info-key">Your Seat</span>
-                  <span className="info-val">
-                    P{waiting.seatIndex + 1}{" "}
-                    <span className="tag">
-                      ({waiting.seatIndex % 2 === 0 ? PLAYER_NAMES[waiting.seatIndex] : "Human"})
-                    </span>
-                  </span>
-                </div>
-              ) : (
-                <div className="info-row">
-                  <span className="info-key">Mode</span>
-                  <span className="info-val">Spectator</span>
-                </div>
-              )}
-              <div className="info-row">
-                <span className="info-key">Players Joined</span>
-                <div className="players-val">
-                  <span className="info-val">{waiting.playersJoined}/2</span>
-                  <div className="seat-dots">
-                    <div className="dot filled" />
-                    <div className={`dot ${waiting.playersJoined >= 2 ? "filled" : "waiting"}`} />
-                  </div>
-                </div>
-              </div>
-              {waiting.biddingPolicy ? (
-                <div className="info-row">
-                  <span className="info-key">Bot Settings</span>
-                  <span className="info-val policy-value">
-                    {waiting.biddingPolicy.mode} ·{" "}
-                    {waiting.biddingPolicy.positionAware ? "position" : "pooled"} ·{" "}
-                    {waiting.kPolicy || "regular"} play
-                    {waiting.botThinkTimeSeconds
-                      ? ` · ${waiting.botThinkTimeSeconds}s`
-                      : ""}
-                  </span>
-                </div>
-              ) : null}
-            </div>
-
-            <button className="btn-back" onClick={() => setWaiting(null)}>
-              <span className="back-arrow">←</span> Back
-            </button>
+            <button className="quiet-action" onClick={() => copy(waiting.roomCode, "code")}>Copy code</button>
           </div>
-
-          <div className="suits-row" aria-hidden>
-            <span className="suit-icon black">♠</span>
-            <span className="suit-icon red">♥</span>
-            <span className="suit-icon red">♦</span>
-            <span className="suit-icon black">♣</span>
+          <div className="waiting-progress">
+            <div><strong>{waiting.playersJoined} of {waiting.targetHumanCount}</strong><span>players joined</span></div>
+            <div className="progress-track"><i style={{ width: `${(waiting.playersJoined / waiting.targetHumanCount) * 100}%` }} /></div>
+            <p>{waiting.playersJoined === waiting.targetHumanCount ? "Starting the game…" : "The game starts automatically when everyone arrives."}</p>
           </div>
-        </div>
-      </div>
+          <TablePreview seats={waiting.seats} ownSeat={waiting.seatIndex} />
+          {waiting.targetHumanCount === 3 && (
+            <p className="partnership-note">This is still a 2 vs 2 game. The bot partners one player, then rotates fairly on rematches.</p>
+          )}
+          {error && <div className="product-error" role="alert">{error}</div>}
+          <button className="text-action" onClick={() => setWaiting(null)}>Leave table</button>
+        </section>
+      </main>
     );
   }
 
   return (
-    <div className="mp-shell">
-      <div className="felt-bg" />
-      <div className="table-ring" />
-      <div className="floating-cards" aria-hidden>
-        <div className="card-deco red" data-suit="♥">J</div>
-        <div className="card-deco black" data-suit="♠">A</div>
-        <div className="card-deco red" data-suit="♦">Q</div>
-        <div className="card-deco black" data-suit="♣">K</div>
-        <div className="card-deco black" data-suit="♣">9</div>
-        <div className="card-deco red" data-suit="♥">10</div>
-        <div className="card-deco red" data-suit="♦">8</div>
-        <div className="card-deco black" data-suit="♠">7</div>
-      </div>
-
-      <div className="stage lobby-stage">
-        <div className="ornament">
-          <div className="ornament-line" />
-          <span className="ornament-suit">♠</span>
-          <div className="ornament-diamond" />
-          <span className="ornament-suit">♥</span>
-          <div className="ornament-line r" />
+    <main className="product-shell">
+      <div className="ambient ambient-one" /><div className="ambient ambient-two" />
+      <header className="product-nav">
+        <div className="product-brand"><span>28</span><b>Twenty-Eight</b></div>
+        <button className="nav-join" onClick={() => setView(view === "join" ? "home" : "join")}>
+          {view === "join" ? "Create a table" : "Join a table"}
+        </button>
+      </header>
+      <section className="hero-grid">
+        <div className="hero-copy">
+          <div className="eyebrow">THE CLASSIC PARTNERSHIP CARD GAME</div>
+          <h1>Your table.<br /><em>Ready when you are.</em></h1>
+          <p>Play Twenty-Eight with friends, capable bots, or both. No setup, no settings—just share and deal.</p>
+          <div className="trust-row"><span>♠ 2 teams</span><span>♦ 4 seats</span><span>♣ 1 invite</span></div>
         </div>
-
-        <h1 className="page-title">
-          <span>28</span> Card Game
-        </h1>
-        <p className="page-sub">Create a room or join with a code</p>
-
-        {onSelfPlay ? (
-          <button className="btn-self-play" onClick={onSelfPlay}>
-            Open Self Play Arena
-          </button>
-        ) : null}
-
-        <div className="panels">
-          <div className="panel">
-            <div>
-              <div className="panel-label">New Game</div>
-              <div className="panel-heading">Create Room</div>
-            </div>
-            <div className="panel-rule" />
-
-            <div className="field">
-              <label className="field-label">Your Name</label>
-              <input
-                value={createPlayerName}
-                onChange={(e) => setCreatePlayerName(e.target.value)}
-                placeholder="Enter your name"
-                maxLength={24}
-                autoComplete="off"
-              />
-            </div>
-
-            <details className="bid-settings">
-              <summary>
-                <span>
-                  <strong>Bot settings</strong>
-                  <small>Bidding and play strength</small>
-                </span>
-                <span className="policy-summary">{policyLabel}</span>
-              </summary>
-
-              <div className="bid-settings-body">
-                <div className="settings-section-label">Bidding style</div>
-                <div className="policy-modes" role="group" aria-label="Bidding preset">
-                  {(["aggressive", "optimal", "custom"] as BidPolicyMode[]).map((mode) => (
-                    <button
-                      type="button"
-                      key={mode}
-                      className={biddingPolicy.mode === mode ? "active" : ""}
-                      onClick={() => setPolicyMode(mode)}
-                    >
-                      {mode}
-                    </button>
-                  ))}
-                </div>
-
-                <label className="position-toggle">
-                  <span>
-                    <strong>Use bid position</strong>
-                    <small>25 games per hand and position</small>
-                  </span>
-                  <input
-                    type="checkbox"
-                    checked={biddingPolicy.positionAware}
-                    onChange={(event) =>
-                      setBiddingPolicy((current) => ({
-                        ...current,
-                        positionAware: event.target.checked,
-                      }))
-                    }
-                  />
-                  <i aria-hidden />
-                </label>
-
-                {biddingPolicy.mode === "custom" ? (
-                  <div className="threshold-grid">
-                    {(
-                      [
-                        ["opening15", "Opening 15"],
-                        ["opening16", "Opening 16"],
-                        ["laterBid", "Later bid"],
-                        ["jumpTo16", "14→16 jump"],
-                      ] as Array<[keyof BidThresholds, string]>
-                    ).map(([field, label]) => (
-                      <label key={field}>
-                        <span>{label}</span>
-                        <span className="percent-input">
-                          <input
-                            type="number"
-                            min="0"
-                            max="100"
-                            inputMode="numeric"
-                            value={(biddingPolicy.thresholds || DEFAULT_CUSTOM_THRESHOLDS)[field]}
-                            onChange={(event) => setCustomThreshold(field, event.target.value)}
-                          />
-                          <b>%</b>
-                        </span>
-                      </label>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="preset-note">
-                    {biddingPolicy.mode === "aggressive"
-                      ? "Open 15 ≥61% · open 16 ≥66% · later ≥61% · jump ≥71%"
-                      : "Open 15 ≥67% · open 16 ≥70% · later ≥67% · jump ≥75%"}
-                  </p>
-                )}
-
-                <div className="settings-divider" />
-                <div className="play-policy-heading">
-                  <span>
-                    <strong>Play strength</strong>
-                    <small>Controls Rust search breadth</small>
-                  </span>
-                </div>
-                <div
-                  className="policy-modes play-policy-modes"
-                  role="group"
-                  aria-label="Play search strength"
-                >
-                  {(["regular", "aggressive"] as KPolicyMode[]).map((mode) => (
-                    <button
-                      type="button"
-                      key={mode}
-                      className={kPolicy === mode ? "active" : ""}
-                      onClick={() => setKPolicy(mode)}
-                    >
-                      <span>{mode}</span>
-                      <small>
-                        {mode === "regular" ? "2·2·3·3·4·3·2·1" : "3·3·4·4·4·3·2·1"}
-                      </small>
-                    </button>
-                  ))}
-                </div>
-                <p className="preset-note play-note">
-                  Aggressive explores more moves and may take longer.
-                </p>
-
-                <div className="settings-divider" />
-                <div className="play-policy-heading">
-                  <span>
-                    <strong>Thinking time</strong>
-                    <small>Maximum time for each bot card play</small>
-                  </span>
-                </div>
-                <div
-                  className="think-time-presets"
-                  role="group"
-                  aria-label="Bot thinking time"
-                >
-                  {[10, 30, 60].map((seconds) => (
-                    <button
-                      type="button"
-                      key={seconds}
-                      className={botThinkTimeSeconds === seconds ? "active" : ""}
-                      onClick={() => setBotThinkTimeSeconds(seconds)}
-                    >
-                      {seconds}s
-                    </button>
-                  ))}
-                  <label>
-                    <input
-                      aria-label="Custom bot thinking seconds"
-                      type="number"
-                      min="1"
-                      max="120"
-                      inputMode="numeric"
-                      value={botThinkTimeSeconds}
-                      onChange={(event) => {
-                        const value = Number(event.target.value);
-                        if (Number.isFinite(value)) {
-                          setBotThinkTimeSeconds(Math.max(1, Math.min(120, value)));
-                        }
-                      }}
-                    />
-                    <span>s</span>
-                  </label>
-                </div>
-                <p className="preset-note play-note">
-                  Plays the best result from every rollout completed in time.
-                </p>
-              </div>
-            </details>
-
-            <button className="btn-create" onClick={createRoom} disabled={loading || !createPlayerName.trim()}>
-              {loading ? "Creating..." : "Create Room"}
-            </button>
-          </div>
-
-          <div className="divider-v" />
-
-          <div className="panel">
-            <div>
-              <div className="panel-label">Existing Game</div>
-              <div className="panel-heading">Join Room</div>
-            </div>
-            <div className="panel-rule right" />
-
-            <div className="field">
-              <label className="field-label">Room Code</label>
-              <input
-                value={joinCode}
-                onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
-                placeholder="· · · · · ·"
-                className="code-input"
-                maxLength={10}
-                autoComplete="off"
-              />
-            </div>
-
-            <div className="field">
-              <label className="field-label">Your Name</label>
-              <input
-                value={joinPlayerName}
-                onChange={(e) => setJoinPlayerName(e.target.value)}
-                placeholder="Enter your name"
-                maxLength={24}
-                autoComplete="off"
-              />
-            </div>
-
-            <button className="btn-join" onClick={() => joinRoom(false)} disabled={loading || !joinPlayerName.trim()}>
-              {loading ? "Joining..." : "Join as New Player"}
-            </button>
-
-            <button className="btn-spectate" onClick={spectateRoom} disabled={loading || !normalizedJoinCode}>
-              {loading ? "Checking..." : "Spectate Room"}
-            </button>
-
-            {existingJoinToken && (
-              <button className="btn-reconnect" onClick={() => joinRoom(true)} disabled={loading}>
-                Reconnect Previous Seat
-              </button>
-            )}
-          </div>
+        <div className="setup-card">
+          {view === "home" ? (
+            <>
+              <div className="setup-heading"><span>Start a game</span><small>About two taps away</small></div>
+              <label className="product-field"><span>Your name</span><input autoFocus value={name} maxLength={24} autoComplete="name" placeholder="What should we call you?" onChange={(event) => setName(event.target.value)} /></label>
+              <fieldset className="player-count"><legend>How many people are playing?</legend><div className="count-grid">
+                {[1,2,3,4].map((count) => <button type="button" key={count} className={humanCount === count ? "selected" : ""} onClick={() => setHumanCount(count)}><strong>{count}</strong><span>{count === 1 ? "Just me" : `${count} people`}</span><small>{4-count ? `${4-count} bot${4-count > 1 ? "s" : ""}` : "No bots"}</small></button>)}
+              </div></fieldset>
+              <button className="primary-action wide" disabled={loading} onClick={createTable}>{loading ? "Setting the table…" : humanCount === 1 ? "Play now" : "Create table"}<span>→</span></button>
+            </>
+          ) : (
+            <>
+              <div className="setup-heading"><span>{inviteCode ? "You've been invited" : "Join a table"}</span><small>Enter the code your friend shared</small></div>
+              <label className="product-field"><span>Table code</span><input autoFocus className="join-code-input" value={joinCode} maxLength={6} inputMode="text" autoCapitalize="characters" placeholder="ABC 123" onChange={(event) => setJoinCode(normalizeCode(event.target.value))} /></label>
+              <label className="product-field"><span>Your name</span><input value={name} maxLength={24} autoComplete="name" placeholder="What should we call you?" onChange={(event) => setName(event.target.value)} /></label>
+              <button className="primary-action wide" disabled={loading} onClick={joinTable}>{loading ? "Joining…" : "Join table"}<span>→</span></button>
+            </>
+          )}
+          {error && <div className="product-error" role="alert">{error}</div>}
+          <div className="setup-foot">Private room · No account needed</div>
         </div>
-
-        {error && <div className="error-banner">{error}</div>}
-
-        <div className="suits-row" aria-hidden>
-          <span className="suit-icon black">♠</span>
-          <span className="suit-icon red">♥</span>
-          <span className="suit-icon red">♦</span>
-          <span className="suit-icon black">♣</span>
-        </div>
-      </div>
-    </div>
+      </section>
+      <footer className="product-footer"><span>Built for phones, tablets, and desktops.</span><span>Strong Rust-powered opponents fill empty seats.</span></footer>
+    </main>
   );
 }

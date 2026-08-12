@@ -34,22 +34,19 @@ from app.engine.self_play_results import append_self_play_result
 
 router = APIRouter()
 
-BOT_SEATS = {0, 2}
-
 # Delay to display completed trick (4 cards visible)
 TRICK_DISPLAY_DELAY_SECONDS = 3
 # Pause duration for empty table between tricks
 EMPTY_TABLE_PAUSE_SECONDS = 1
 
-_ROOM_CONNECTIONS: dict[str, list[tuple[WebSocket, int | None, bool]]] = defaultdict(list)
-_ROOM_CHAT_CONNECTIONS: dict[str, list[WebSocket]] = defaultdict(list)
+_ROOM_CONNECTIONS: dict[str, list[tuple[WebSocket, str | None, bool]]] = defaultdict(list)
 _ROOM_REGISTRY_LOCK = asyncio.Lock()
 async def _register_room_connection(
-    room_code: str, websocket: WebSocket, viewer_seat: int | None, can_act: bool
+    room_code: str, websocket: WebSocket, player_token: str | None, can_act: bool
 ) -> None:
     async with _ROOM_REGISTRY_LOCK:
         key = room_code.upper()
-        _ROOM_CONNECTIONS[key].append((websocket, viewer_seat, can_act))
+        _ROOM_CONNECTIONS[key].append((websocket, player_token, can_act))
 
 
 async def _unregister_room_connection(room_code: str, websocket: WebSocket) -> None:
@@ -57,8 +54,8 @@ async def _unregister_room_connection(room_code: str, websocket: WebSocket) -> N
         key = room_code.upper()
         conns = _ROOM_CONNECTIONS.get(key, [])
         _ROOM_CONNECTIONS[key] = [
-            (ws, seat, can_act)
-            for ws, seat, can_act in conns
+            (ws, token, can_act)
+            for ws, token, can_act in conns
             if ws is not websocket
         ]
         if not _ROOM_CONNECTIONS[key]:
@@ -67,41 +64,9 @@ async def _unregister_room_connection(room_code: str, websocket: WebSocket) -> N
 
 async def _room_connections_snapshot(
     room_code: str,
-) -> list[tuple[WebSocket, int | None, bool]]:
+) -> list[tuple[WebSocket, str | None, bool]]:
     async with _ROOM_REGISTRY_LOCK:
         return list(_ROOM_CONNECTIONS.get(room_code.upper(), []))
-
-
-async def _register_room_chat_connection(
-    room_code: str, websocket: WebSocket
-) -> None:
-    async with _ROOM_REGISTRY_LOCK:
-        _ROOM_CHAT_CONNECTIONS[room_code.upper()].append(websocket)
-
-
-async def _unregister_room_chat_connection(
-    room_code: str, websocket: WebSocket
-) -> None:
-    async with _ROOM_REGISTRY_LOCK:
-        key = room_code.upper()
-        _ROOM_CHAT_CONNECTIONS[key] = [
-            ws for ws in _ROOM_CHAT_CONNECTIONS.get(key, []) if ws is not websocket
-        ]
-        if not _ROOM_CHAT_CONNECTIONS[key]:
-            _ROOM_CHAT_CONNECTIONS.pop(key, None)
-
-
-async def _broadcast_chat_message(room_code: str, payload: dict) -> None:
-    async with _ROOM_REGISTRY_LOCK:
-        sockets = list(_ROOM_CHAT_CONNECTIONS.get(room_code.upper(), []))
-    stale: list[WebSocket] = []
-    for ws in sockets:
-        try:
-            await ws.send_json(payload)
-        except Exception:
-            stale.append(ws)
-    for ws in stale:
-        await _unregister_room_chat_connection(room_code, ws)
 
 
 async def _send_state(websocket: WebSocket, state) -> None:
@@ -148,8 +113,13 @@ async def _send_state_for_viewer(
 
 async def _broadcast_room_state(room_code: str, state) -> None:
     stale_sockets: list[WebSocket] = []
-    for ws, viewer_seat, can_act in await _room_connections_snapshot(room_code):
+    for ws, player_token, can_act in await _room_connections_snapshot(room_code):
         try:
+            viewer_seat = None
+            if player_token is not None:
+                _, viewer_seat = room_manager.validate_player(
+                    room_code=room_code, player_token=player_token
+                )
             await _send_state_for_viewer(ws, state, viewer_seat, can_act)
         except Exception:
             stale_sockets.append(ws)
@@ -392,16 +362,19 @@ async def _advance_bots_until_human_any_phase(
     state, pool, bot_sem, websocket: WebSocket, game_id: str, send_state_fn
 ) -> None:
     """
-    Auto-advance bot seats (0,2) in:
+    Auto-advance every seat marked as a bot in:
       - BIDDING_R1: pooled empirical-data bid (and if starting bidder has canRedeal -> bot always redeals)
       - TRUMP_SELECT_R1: rules-based trump pick
       - BIDDING_R2: bots always pass
       - PLAY: rollout bot plays
     """
+    bot_seats = {
+        seat for seat, seat_type in enumerate(state.seat_types) if seat_type == "bot"
+    }
     while True:
         if state.phase == "BIDDING_R1":
             seat = state.turn_index
-            if seat not in BOT_SEATS:
+            if seat not in bot_seats:
                 return
 
             first4_points_by_seat = [
@@ -430,7 +403,7 @@ async def _advance_bots_until_human_any_phase(
             _, highest_seat = _current_highest_r1(state)
             partner = _partner_seat(seat)
 
-            if highest_seat == partner and highest_seat in BOT_SEATS:
+            if highest_seat == partner and highest_seat in bot_seats:
                 bid_value = 0
             else:
                 bid_value = choose_r1_bid_from_data(
@@ -454,7 +427,7 @@ async def _advance_bots_until_human_any_phase(
 
         if state.phase == "TRUMP_SELECT_R1":
             seat = state.final_bidder_seat
-            if seat is None or seat not in BOT_SEATS:
+            if seat is None or seat not in bot_seats:
                 return
 
             plan = plan_bid_and_trump_from_first4(
@@ -495,7 +468,7 @@ async def _advance_bots_until_human_any_phase(
 
         if state.phase == "BIDDING_R2":
             seat = state.turn_index
-            if seat not in BOT_SEATS:
+            if seat not in bot_seats:
                 return
             _apply_r2_bid(state, seat=seat, bid_value=0)
             continue
@@ -503,7 +476,7 @@ async def _advance_bots_until_human_any_phase(
         if state.phase == "TRUMP_SELECT_R2":
             # Bots should not reach here because they always pass R2, but keep safe.
             seat = state.final_bidder_seat
-            if seat is None or seat not in BOT_SEATS:
+            if seat is None or seat not in bot_seats:
                 return
             legal_ids = [to_card_id(c) for c in state.players_cards[seat]]
             if not legal_ids:
@@ -513,7 +486,7 @@ async def _advance_bots_until_human_any_phase(
 
         if state.phase == "PLAY":
             await advance_bots_until_human(
-                state, pool, bot_sem, websocket, send_state_fn
+                state, pool, bot_sem, websocket, send_state_fn, bot_seats=bot_seats
             )
             return
 
@@ -549,17 +522,29 @@ async def _run_ws_session(
     pool = app.state.process_pool
     bot_sem = app.state.bot_sem
 
+    def current_viewer_seat() -> int | None:
+        if room_code is None or player_token is None:
+            return viewer_seat
+        _, current_seat = room_manager.validate_player(
+            room_code=room_code, player_token=player_token
+        )
+        return current_seat
+
     async def send_state_current() -> None:
         if broadcast_state is not None:
             await broadcast_state(state)
             return
-        await _send_state_for_viewer(websocket, state, viewer_seat, can_act)
+        await _send_state_for_viewer(
+            websocket, state, current_viewer_seat(), can_act
+        )
 
     async def send_state_fn(ws: WebSocket, current_state) -> None:
         if broadcast_state is not None:
             await broadcast_state(current_state)
             return
-        await _send_state_for_viewer(ws, current_state, viewer_seat, can_act)
+        await _send_state_for_viewer(
+            ws, current_state, current_viewer_seat(), can_act
+        )
 
     await _advance_bots_until_human_any_phase(
         state, pool, bot_sem, websocket, game_id, send_state_fn
@@ -583,6 +568,7 @@ async def _run_ws_session(
         while True:
             msg = await websocket.receive_json()
             msg_type = msg.get("type")
+            viewer_seat = current_viewer_seat()
 
             if msg_type == "GET_STATE":
                 await send_state_current()
@@ -612,7 +598,7 @@ async def _run_ws_session(
                         "status": "started" if result.started else "waiting",
                         "requestedBySeatIndex": viewer_seat,
                         "readySeatIndices": list(result.ready_seats),
-                        "waitingForSeatIndex": result.waiting_for_seat,
+                        "waitingForSeatIndices": list(result.waiting_for_seats),
                         "startingBidderIndex": result.starting_bidder_index,
                     },
                 )
@@ -994,7 +980,7 @@ async def ws_room(websocket: WebSocket, room_code: str) -> None:
 
     if game_id is None:
         await websocket.send_json(
-            {"type": "ERROR", "message": "Waiting for second player to join room."}
+            {"type": "ERROR", "message": "Waiting for the other players to join."}
         )
         await websocket.close()
         return
@@ -1005,7 +991,12 @@ async def ws_room(websocket: WebSocket, room_code: str) -> None:
         await websocket.close()
         return
 
-    await _register_room_connection(room_code, websocket, viewer_seat, can_act)
+    await _register_room_connection(
+        room_code,
+        websocket,
+        player_token if not is_spectator else None,
+        can_act,
+    )
     try:
         await _run_ws_session(
             websocket,
@@ -1023,53 +1014,3 @@ async def ws_room(websocket: WebSocket, room_code: str) -> None:
         await _unregister_room_connection(room_code, websocket)
 
 
-@router.websocket("/ws/rooms/{room_code}/chat")
-async def ws_room_chat(websocket: WebSocket, room_code: str) -> None:
-    """Independent room chat channel, so bot search never delays messages."""
-    await websocket.accept()
-    player_token = websocket.query_params.get("token", "").strip()
-    if not player_token:
-        await websocket.send_json({"type": "ERROR", "message": "Missing room token."})
-        await websocket.close()
-        return
-
-    try:
-        room_manager.validate_player(
-            room_code=room_code, player_token=player_token
-        )
-        history = room_manager.get_chat_history(room_code=room_code)
-    except RoomNotFoundError:
-        await websocket.send_json({"type": "ERROR", "message": "Room not found."})
-        await websocket.close()
-        return
-    except RoomTokenError:
-        await websocket.send_json({"type": "ERROR", "message": "Invalid room token."})
-        await websocket.close()
-        return
-
-    await _register_room_chat_connection(room_code, websocket)
-    try:
-        await websocket.send_json({"type": "CHAT_HISTORY", "messages": history})
-        while True:
-            msg = await websocket.receive_json()
-            if msg.get("type") != "SEND_CHAT":
-                await websocket.send_json(
-                    {"type": "ERROR", "message": "Unknown chat message type."}
-                )
-                continue
-            try:
-                chat_message = room_manager.add_chat_message(
-                    room_code=room_code,
-                    player_token=player_token,
-                    text=msg.get("text", ""),
-                )
-            except (RoomError, RoomNotFoundError, RoomTokenError) as exc:
-                await websocket.send_json({"type": "ERROR", "message": str(exc)})
-                continue
-            await _broadcast_chat_message(
-                room_code, {"type": "CHAT_MESSAGE", "message": chat_message}
-            )
-    except WebSocketDisconnect:
-        return
-    finally:
-        await _unregister_room_chat_connection(room_code, websocket)
