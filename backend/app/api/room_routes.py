@@ -21,6 +21,7 @@ class CreateRoomRequest(BaseModel):
     playerName: str = Field(min_length=1, max_length=24)
     biddingPolicy: BidPolicyRequest | None = None
     kPolicy: KPolicyMode | None = None
+    botThinkTimeSeconds: float = Field(default=30.0, ge=1.0, le=120.0)
 
 
 class JoinRoomRequest(BaseModel):
@@ -59,6 +60,7 @@ def create_room(req: CreateRoomRequest) -> RoomJoinResponse:
             starting_bidder_index=req.startingBidderIndex,
             bot_bidding_policy=resolve_bid_policy(req.biddingPolicy),
             bot_k_policy=resolve_k_policy(req.kPolicy),
+            bot_think_timeout_seconds=req.botThinkTimeSeconds,
         )
         return _to_join_response(assignment)
     except RoomError as e:

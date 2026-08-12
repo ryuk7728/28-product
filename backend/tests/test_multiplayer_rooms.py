@@ -103,6 +103,7 @@ def test_room_propagates_custom_position_aware_policy_to_game_state() -> None:
                 "playerName": "Alice",
                 "biddingPolicy": policy,
                 "kPolicy": "aggressive",
+                "botThinkTimeSeconds": 45,
             },
         )
         assert created.status_code == 200
@@ -113,6 +114,7 @@ def test_room_propagates_custom_position_aware_policy_to_game_state() -> None:
             "mode": "aggressive",
             "kByCatch": [3, 3, 4, 4, 4, 3, 2, 1],
         }
+        assert status["botThinkTimeSeconds"] == 45
 
         joined = client.post(
             "/rooms/join",
@@ -123,6 +125,7 @@ def test_room_propagates_custom_position_aware_policy_to_game_state() -> None:
         assert game["startingBidderIndex"] == 2
         assert game["botBiddingPolicy"] == policy
         assert game["botKPolicy"] == status["kPolicy"]
+        assert game["botThinkTimeSeconds"] == 45
 
 
 def test_custom_policy_requires_thresholds() -> None:
@@ -146,11 +149,91 @@ def test_room_defaults_to_regular_k_policy_and_rejects_unknown_mode() -> None:
             "mode": "regular",
             "kByCatch": [2, 2, 3, 3, 4, 3, 2, 1],
         }
+        assert status["botThinkTimeSeconds"] == 30
 
         invalid = client.post(
             "/rooms", json={"playerName": "Alice", "kPolicy": "maximum"}
         )
         assert invalid.status_code == 422
+
+        too_long = client.post(
+            "/rooms",
+            json={"playerName": "Alice", "botThinkTimeSeconds": 121},
+        )
+        assert too_long.status_code == 422
+
+
+def test_room_chat_broadcasts_plain_text_and_restores_history() -> None:
+    with TestClient(app) as client:
+        alice = client.post("/rooms", json={"playerName": "Alice"}).json()
+        bob = client.post(
+            "/rooms/join",
+            json={"roomCode": alice["roomCode"], "playerName": "Bob"},
+        ).json()
+        room = alice["roomCode"]
+        text = '<script>alert("still text")</script>'
+
+        with client.websocket_connect(
+            f"/ws/rooms/{room}/chat?token={alice['playerToken']}"
+        ) as ws_a, client.websocket_connect(
+            f"/ws/rooms/{room}/chat?token={bob['playerToken']}"
+        ) as ws_b:
+            assert ws_a.receive_json() == {"type": "CHAT_HISTORY", "messages": []}
+            assert ws_b.receive_json() == {"type": "CHAT_HISTORY", "messages": []}
+            ws_a.send_json({"type": "SEND_CHAT", "text": text})
+            for ws in (ws_a, ws_b):
+                received = ws.receive_json()
+                assert received["type"] == "CHAT_MESSAGE"
+                assert received["message"]["text"] == text
+                assert received["message"]["senderName"] == "Alice"
+
+        with client.websocket_connect(
+            f"/ws/rooms/{room}/chat?token={bob['playerToken']}"
+        ) as reconnected:
+            history = reconnected.receive_json()
+            assert history["type"] == "CHAT_HISTORY"
+            assert [item["text"] for item in history["messages"]] == [text]
+
+
+def test_room_chat_rejects_invalid_token_length_and_rate_limit() -> None:
+    with TestClient(app) as client:
+        alice = client.post("/rooms", json={"playerName": "Alice"}).json()
+        room = alice["roomCode"]
+        with client.websocket_connect(f"/ws/rooms/{room}/chat?token=wrong") as invalid:
+            assert invalid.receive_json()["message"] == "Invalid room token."
+
+        with client.websocket_connect(
+            f"/ws/rooms/{room}/chat?token={alice['playerToken']}"
+        ) as ws:
+            ws.receive_json()
+            ws.send_json({"type": "SEND_CHAT", "text": "x" * 281})
+            assert "at most 280" in ws.receive_json()["message"]
+
+            for index in range(5):
+                ws.send_json({"type": "SEND_CHAT", "text": f"m{index}"})
+                assert ws.receive_json()["type"] == "CHAT_MESSAGE"
+            ws.send_json({"type": "SEND_CHAT", "text": "too fast"})
+            assert "too quickly" in ws.receive_json()["message"]
+
+
+def test_room_chat_history_is_isolated_between_rooms() -> None:
+    with TestClient(app) as client:
+        first = client.post("/rooms", json={"playerName": "Alice"}).json()
+        second = client.post("/rooms", json={"playerName": "Carol"}).json()
+        with client.websocket_connect(
+            f"/ws/rooms/{first['roomCode']}/chat?token={first['playerToken']}"
+        ) as ws_first:
+            ws_first.receive_json()
+            ws_first.send_json({"type": "SEND_CHAT", "text": "first room only"})
+            assert ws_first.receive_json()["type"] == "CHAT_MESSAGE"
+
+        with client.websocket_connect(
+            f"/ws/rooms/{second['roomCode']}/chat?token={second['playerToken']}"
+        ) as ws_second:
+            assert ws_second.receive_json() == {
+                "type": "CHAT_HISTORY",
+                "messages": [],
+            }
 
 
 def test_ws_room_redacts_hands_and_enforces_seat_actions() -> None:

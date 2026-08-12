@@ -24,6 +24,7 @@ export interface PlayerData {
   isBidder: boolean;
   currentBid: number | null;
   isThinking: boolean;
+  thinkingDeadlineEpochMs?: number | null;
   speechBubbleText?: string | null;
   handContent: ReactNode;
 }
@@ -74,6 +75,7 @@ export const GameArena: React.FC<GameArenaProps> = ({
                     isBidder={player.isBidder}
                     currentBid={player.currentBid}
                     isThinking={player.isThinking}
+                    thinkingDeadlineEpochMs={player.thinkingDeadlineEpochMs}
                     speechBubbleText={player.speechBubbleText}
                     speechBubbleDirection={speechBubbleDirection}
                   />
@@ -89,6 +91,7 @@ export const GameArena: React.FC<GameArenaProps> = ({
                     isBidder={player.isBidder}
                     currentBid={player.currentBid}
                     isThinking={player.isThinking}
+                    thinkingDeadlineEpochMs={player.thinkingDeadlineEpochMs}
                     speechBubbleText={player.speechBubbleText}
                     speechBubbleDirection={speechBubbleDirection}
                   />
@@ -106,6 +109,7 @@ export const GameArena: React.FC<GameArenaProps> = ({
                     isBidder={player.isBidder}
                     currentBid={player.currentBid}
                     isThinking={player.isThinking}
+                    thinkingDeadlineEpochMs={player.thinkingDeadlineEpochMs}
                     speechBubbleText={player.speechBubbleText}
                     speechBubbleDirection={speechBubbleDirection}
                   />

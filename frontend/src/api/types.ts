@@ -50,6 +50,12 @@ export type GameState = {
   autoDeal: boolean;
   botBiddingPolicy?: BidPolicy & { thresholds: BidThresholds };
   botKPolicy?: KPolicy;
+  botThinkTimeSeconds?: number | null;
+  botThinking?: {
+    seatIndex: number;
+    startedAtEpochMs: number;
+    deadlineEpochMs: number;
+  } | null;
   bidsR1: number[];
   bidsR2: number[];
   round1BidderSeat: number | null;
@@ -90,7 +96,21 @@ export type RoomJoinResponse = {
   playerToken: string;
   waitingForPlayer: boolean;
   playersJoined: number;
+  botThinkTimeSeconds?: number;
 };
+
+export type ChatMessage = {
+  id: string;
+  seatIndex: number;
+  senderName: string;
+  text: string;
+  sentAtEpochMs: number;
+};
+
+export type ChatWsMessage =
+  | { type: "CHAT_HISTORY"; messages: ChatMessage[] }
+  | { type: "CHAT_MESSAGE"; message: ChatMessage }
+  | { type: "ERROR"; message: string };
 
 export type RoomStatusResponse = {
   roomCode: string;

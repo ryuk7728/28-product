@@ -2,6 +2,7 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 struct Card {
@@ -55,6 +56,8 @@ struct SearchInput {
     k: i32,
     alpha: Option<f64>,
     beta: Option<f64>,
+    #[serde(rename = "deadlineEpochMs", default)]
+    deadline_epoch_ms: Option<u64>,
 }
 
 #[derive(Clone, Debug)]
@@ -116,6 +119,22 @@ struct RewardEntryOut {
 struct SearchOutput {
     value: i32,
     reward_distribution: Vec<RewardEntryOut>,
+    #[serde(rename = "timedOut")]
+    timed_out: bool,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct DeadlineExceeded;
+
+fn deadline_reached(deadline_epoch_ms: Option<u64>) -> bool {
+    let Some(deadline) = deadline_epoch_ms else {
+        return false;
+    };
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or(u128::MAX);
+    now >= u128::from(deadline)
 }
 
 fn chance(s_len: usize) -> usize {
@@ -199,10 +218,7 @@ fn actions(state: &GameState) -> Vec<Action> {
         valid_card(&player.cards, &state.current_suit, &state.trump_suit);
 
     if !cur_suit_idx.is_empty() {
-        return cur_suit_idx
-            .iter()
-            .map(|idx| Action::Card(*idx))
-            .collect();
+        return cur_suit_idx.iter().map(|idx| Action::Card(*idx)).collect();
     }
 
     if !state.trump_reveal && !state.chose {
@@ -213,7 +229,11 @@ fn actions(state: &GameState) -> Vec<Action> {
         if state.trump_reveal {
             if player_idx == state.final_bid.saturating_sub(1) {
                 if let Some(card) = &state.player_trump {
-                    if let Some(idx) = player.cards.iter().position(|c| c.identity == card.identity) {
+                    if let Some(idx) = player
+                        .cards
+                        .iter()
+                        .position(|c| c.identity == card.identity)
+                    {
                         return vec![Action::Card(idx)];
                     }
                     return Vec::new();
@@ -276,10 +296,11 @@ fn apply_result(state: &mut GameState, action: &Action) -> UndoInfo {
             undo.action_type = UndoActionType::Card;
 
             let player_idx = current_player(state);
-            let removed_card = match remove_card_by_index(&mut state.players[player_idx].cards, *index) {
-                Some(v) => v,
-                None => return undo,
-            };
+            let removed_card =
+                match remove_card_by_index(&mut state.players[player_idx].cards, *index) {
+                    Some(v) => v,
+                    None => return undo,
+                };
 
             undo.card_removed_from_player = Some(player_idx);
             undo.card_removed_index = Some(*index);
@@ -391,7 +412,10 @@ fn checkwin_extended(state: &GameState) -> Option<(usize, i32)> {
         let mut max_order = i32::MIN;
         for (idx, card) in state.s.iter().enumerate() {
             points += card.points;
-            if idx < state.trump_indice.len() && state.trump_indice[idx] == 1 && card.order > max_order {
+            if idx < state.trump_indice.len()
+                && state.trump_indice[idx] == 1
+                && card.order > max_order
+            {
                 max_order = card.order;
                 max_index = idx;
             }
@@ -461,6 +485,7 @@ fn update_root_rewards_min(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn minimax_extended_rec(
     state: &mut GameState,
     first: bool,
@@ -470,7 +495,11 @@ fn minimax_extended_rec(
     alpha: f64,
     beta: f64,
     reward_distribution: &mut Vec<(RewardAction, i32)>,
-) -> i32 {
+    deadline_epoch_ms: Option<u64>,
+) -> Result<i32, DeadlineExceeded> {
+    if deadline_reached(deadline_epoch_ms) {
+        return Err(DeadlineExceeded);
+    }
     if let Some((winner, signed_points)) = checkwin_extended(state) {
         let next_total = total + signed_points;
         let next_num = num + 1;
@@ -494,9 +523,10 @@ fn minimax_extended_rec(
                 alpha,
                 beta,
                 reward_distribution,
+                deadline_epoch_ms,
             )
         } else {
-            next_total
+            Ok(next_total)
         };
 
         state.player_chance = prev_player_chance;
@@ -508,7 +538,7 @@ fn minimax_extended_rec(
         return outcome;
     }
 
-    let maximizing = (state.player_chance + chance(state.s.len())) % 2 != 0;
+    let maximizing = !(state.player_chance + chance(state.s.len())).is_multiple_of(2);
 
     if maximizing {
         let mut value = i32::MIN;
@@ -518,7 +548,7 @@ fn minimax_extended_rec(
 
         for action in &acts {
             let undo = apply_result(state, action);
-            let newtake = minimax_extended_rec(
+            let next_result = minimax_extended_rec(
                 state,
                 false,
                 total,
@@ -527,10 +557,12 @@ fn minimax_extended_rec(
                 local_alpha,
                 beta,
                 reward_distribution,
+                deadline_epoch_ms,
             );
+            undo_result(state, undo);
+            let newtake = next_result?;
             value = value.max(newtake);
             local_alpha = local_alpha.max(value as f64);
-            undo_result(state, undo);
 
             update_root_rewards_max(first, state, action, newtake, reward_distribution);
 
@@ -539,7 +571,7 @@ fn minimax_extended_rec(
             }
         }
 
-        value
+        Ok(value)
     } else {
         let mut value = i32::MAX;
         let mut local_beta = beta;
@@ -548,7 +580,7 @@ fn minimax_extended_rec(
 
         for action in &acts {
             let undo = apply_result(state, action);
-            let newtake = minimax_extended_rec(
+            let next_result = minimax_extended_rec(
                 state,
                 false,
                 total,
@@ -557,10 +589,12 @@ fn minimax_extended_rec(
                 alpha,
                 local_beta,
                 reward_distribution,
+                deadline_epoch_ms,
             );
+            undo_result(state, undo);
+            let newtake = next_result?;
             value = value.min(newtake);
             local_beta = local_beta.min(value as f64);
-            undo_result(state, undo);
 
             update_root_rewards_min(first, state, action, newtake, reward_distribution);
 
@@ -569,7 +603,7 @@ fn minimax_extended_rec(
             }
         }
 
-        value
+        Ok(value)
     }
 }
 
@@ -631,7 +665,7 @@ fn minimax_extended_core(input_json: &str) -> PyResult<String> {
     // `secondary` is parsed for API compatibility with Python calls.
     let _secondary = input.secondary;
 
-    let value = minimax_extended_rec(
+    let search_result = minimax_extended_rec(
         &mut state,
         input.first,
         input.total,
@@ -640,11 +674,21 @@ fn minimax_extended_core(input_json: &str) -> PyResult<String> {
         alpha,
         beta,
         &mut reward_distribution,
+        input.deadline_epoch_ms,
     );
+
+    let (value, timed_out) = match search_result {
+        Ok(value) => (value, false),
+        Err(DeadlineExceeded) => {
+            reward_distribution.clear();
+            (0, true)
+        }
+    };
 
     let output = SearchOutput {
         value,
         reward_distribution: reward_to_output(reward_distribution),
+        timed_out,
     };
 
     serde_json::to_string(&output).map_err(|e| PyValueError::new_err(e.to_string()))
@@ -718,7 +762,10 @@ mod tests {
         assert!(!state.trump_played);
         assert_eq!(state.trump_indice, vec![0, 0, 0, 0]);
         assert!(state.players[3].cards.is_empty());
-        assert_eq!(state.player_trump.as_ref().unwrap().identity, "Ace of Clubs");
+        assert_eq!(
+            state.player_trump.as_ref().unwrap().identity,
+            "Ace of Clubs"
+        );
     }
 
     #[test]

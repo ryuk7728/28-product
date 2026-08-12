@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 import app.bots.rollout_bot as rb
 import app.engine.play_engine as pe
+import app.engine.bot_runner as bot_runner
 from app.engine.cards_adapter import from_card_id
 from app.settings import Settings
 
@@ -27,6 +28,28 @@ class _FakePool:
             if fut.cancelled() or fut.done():
                 return
             fut.set_result({token: n})
+
+        timer = threading.Timer(delay, _complete)
+        timer.daemon = True
+        timer.start()
+        return fut
+
+
+@dataclass
+class _MetadataPool:
+    plan: list[tuple[float, dict[str, int], int]]
+    _idx: int = 0
+
+    def submit(self, _fn, _snapshot, _n: int, _seed: int):
+        fut: Future = Future()
+        delay, counts, completed = self.plan[self._idx]
+        self._idx += 1
+
+        def _complete() -> None:
+            if not fut.done():
+                fut.set_result(
+                    {"counts": counts, "completedRollouts": completed}
+                )
 
         timer = threading.Timer(delay, _complete)
         timer.daemon = True
@@ -142,3 +165,119 @@ def test_timeout_with_no_completed_batches_falls_back(monkeypatch) -> None:
     assert action_type == "PLAY"
     assert payload["cardId"] == "Hearts_Seven"
     assert any("Bot think timeout hit" in x for x in state.event_log)
+
+
+def test_timeout_merges_every_worker_reported_completed_rollout(monkeypatch) -> None:
+    legal_ids = ["Hearts_Seven", "Clubs_Seven"]
+    hearts = from_card_id("Hearts_Seven").identity()
+    clubs = from_card_id("Clubs_Seven").identity()
+    rb.settings = _mk_settings_for_timeout(timeout_seconds=0.04, batch_size=5)
+    monkeypatch.setattr(
+        pe,
+        "compute_play_legal_actions",
+        lambda _state: SimpleNamespace(type="PLAY_CARD", seatIndex=0, cardIds=legal_ids),
+    )
+    monkeypatch.setattr(rb, "_build_snapshot", lambda _state, _seat: {})
+    pool = _MetadataPool(
+        plan=[
+            (0.005, {hearts: 4}, 4),
+            (0.010, {clubs: 5}, 5),
+            # These workers return after the outer wait, as real Rust workers do
+            # while unwinding. One preserves pre-deadline completed rollouts.
+            (0.050, {clubs: 3}, 3),
+            (0.050, {}, 0),
+        ]
+    )
+    state = SimpleNamespace(event_log=[])
+
+    action_type, payload = asyncio.run(
+        rb.choose_action_with_rollouts_parallel(state, 0, pool)
+    )
+
+    assert action_type == "PLAY"
+    assert payload["cardId"] == "Clubs_Seven"
+    assert any("used 12/20 rollouts" in item for item in state.event_log)
+
+
+def test_equal_rollout_counts_use_stable_action_order(monkeypatch) -> None:
+    legal_ids = ["Hearts_Seven", "Clubs_Seven"]
+    hearts = from_card_id("Hearts_Seven").identity()
+    clubs = from_card_id("Clubs_Seven").identity()
+    rb.settings = _mk_settings_for_timeout(timeout_seconds=0.1, batch_size=5)
+    monkeypatch.setattr(
+        pe,
+        "compute_play_legal_actions",
+        lambda _state: SimpleNamespace(type="PLAY_CARD", seatIndex=0, cardIds=legal_ids),
+    )
+    monkeypatch.setattr(rb, "_build_snapshot", lambda _state, _seat: {})
+
+    expected_identity = min(hearts, clubs)
+    expected_card = next(
+        card_id
+        for card_id in legal_ids
+        if from_card_id(card_id).identity() == expected_identity
+    )
+    chosen = []
+    for plan in (
+        [(0.005, {hearts: 5}, 5), (0.010, {clubs: 5}, 5)],
+        [(0.010, {hearts: 5}, 5), (0.005, {clubs: 5}, 5)],
+    ):
+        pool = _MetadataPool(plan=plan + [(0.20, {}, 0), (0.20, {}, 0)])
+        _, payload = asyncio.run(
+            rb.choose_action_with_rollouts_parallel(
+                SimpleNamespace(event_log=[]), 0, pool
+            )
+        )
+        chosen.append(payload["cardId"])
+
+    assert chosen == [expected_card, expected_card]
+
+
+def test_bot_runner_broadcasts_authoritative_deadline_and_clears_it(monkeypatch) -> None:
+    state = SimpleNamespace(
+        phase="PLAY",
+        leaderIndex=0,
+        s=[],
+        bot_think_timeout_seconds=0.05,
+        bot_thinking=None,
+    )
+    seen_calls: list[tuple[float, int]] = []
+    broadcasts: list[dict[str, object] | None] = []
+
+    monkeypatch.setattr(
+        bot_runner,
+        "compute_play_legal_actions",
+        lambda _state: SimpleNamespace(type="PLAY_CARD"),
+    )
+
+    async def fake_choose(_state, _actor, _pool, **kwargs):
+        seen_calls.append((kwargs["timeout_seconds"], kwargs["deadline_epoch_ms"]))
+        assert _state.bot_thinking is not None
+        return "PLAY", {"seatIndex": 0, "cardId": "Hearts_Seven"}
+
+    def fake_play(current, _seat, _card):
+        current.phase = "GAME_OVER"
+
+    async def fake_send(_ws, current):
+        broadcasts.append(
+            dict(current.bot_thinking) if current.bot_thinking is not None else None
+        )
+
+    monkeypatch.setattr(bot_runner, "choose_action_with_rollouts_parallel", fake_choose)
+    monkeypatch.setattr(bot_runner, "apply_play_card", fake_play)
+
+    asyncio.run(
+        bot_runner.advance_bots_until_human(
+            state,
+            pool=object(),
+            bot_sem=asyncio.Semaphore(1),
+            websocket=object(),
+            send_state_fn=fake_send,
+        )
+    )
+
+    assert seen_calls and seen_calls[0][0] == 0.05
+    assert broadcasts[0] is not None
+    assert broadcasts[0]["seatIndex"] == 0
+    assert broadcasts[0]["deadlineEpochMs"] == seen_calls[0][1]
+    assert state.bot_thinking is None

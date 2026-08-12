@@ -26,6 +26,7 @@ import {
 import { useGameWebSocket } from "../hooks/useGameWebSocket";
 import type { Card as CardType, RematchStatusMessage } from "../api/types";
 import { PLAYER_NAMES, BOT_BID_BUBBLE_DELAY_MS } from "../config/constants";
+import { RoomChat } from "../components/RoomChat";
 import "../styles/index.scss";
 
 const BOT_SEATS = new Set([0, 2]);
@@ -621,6 +622,10 @@ export const GamePage: React.FC<GamePageProps> = ({
         isBidder,
         currentBid: playerBid !== null && playerBid > 0 ? playerBid : null,
         isThinking: isBot && isActive,
+        thinkingDeadlineEpochMs:
+          gameState.botThinking?.seatIndex === seatIndex
+            ? gameState.botThinking.deadlineEpochMs
+            : null,
         speechBubbleText,
         handContent: (
           <PlayerHand
@@ -1017,6 +1022,13 @@ export const GamePage: React.FC<GamePageProps> = ({
           )
         }
       />
+      {roomCode && playerToken && !spectateMode ? (
+        <RoomChat
+          roomCode={roomCode}
+          playerToken={playerToken}
+          localSeatIndex={primarySeat}
+        />
+      ) : null}
     </div>
   );
 };

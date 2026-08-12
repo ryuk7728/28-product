@@ -38,10 +38,12 @@ type WaitingState = {
   playersJoined: number;
   biddingPolicy?: BidPolicy;
   kPolicy?: KPolicyMode;
+  botThinkTimeSeconds?: number;
 };
 
 const BID_POLICY_STORAGE_KEY = "bot_bidding_policy_v1";
 const K_POLICY_STORAGE_KEY = "bot_k_policy_v1";
+const BOT_THINK_TIME_STORAGE_KEY = "bot_think_time_seconds_v1";
 const DEFAULT_CUSTOM_THRESHOLDS: BidThresholds = {
   opening15: 67,
   opening16: 70,
@@ -80,6 +82,11 @@ function loadKPolicy(): KPolicyMode {
   return stored === "aggressive" ? "aggressive" : "regular";
 }
 
+function loadBotThinkTime(): number {
+  const stored = Number(localStorage.getItem(BOT_THINK_TIME_STORAGE_KEY));
+  return Number.isFinite(stored) && stored >= 1 && stored <= 120 ? stored : 30;
+}
+
 function tokenStorageKey(roomCode: string): string {
   return `room_token_${roomCode.toUpperCase()}`;
 }
@@ -94,6 +101,7 @@ export function MultiplayerLobbyPage({ onReady, onSelfPlay }: Props) {
   const [copied, setCopied] = useState(false);
   const [biddingPolicy, setBiddingPolicy] = useState<BidPolicy>(loadBidPolicy);
   const [kPolicy, setKPolicy] = useState<KPolicyMode>(loadKPolicy);
+  const [botThinkTimeSeconds, setBotThinkTimeSeconds] = useState(loadBotThinkTime);
 
   useEffect(() => {
     localStorage.setItem(BID_POLICY_STORAGE_KEY, JSON.stringify(biddingPolicy));
@@ -102,6 +110,10 @@ export function MultiplayerLobbyPage({ onReady, onSelfPlay }: Props) {
   useEffect(() => {
     localStorage.setItem(K_POLICY_STORAGE_KEY, kPolicy);
   }, [kPolicy]);
+
+  useEffect(() => {
+    localStorage.setItem(BOT_THINK_TIME_STORAGE_KEY, String(botThinkTimeSeconds));
+  }, [botThinkTimeSeconds]);
 
   const setPolicyMode = (mode: BidPolicyMode) => {
     setBiddingPolicy((current) => ({ ...current, mode }));
@@ -121,7 +133,7 @@ export function MultiplayerLobbyPage({ onReady, onSelfPlay }: Props) {
 
   const policyLabel = `${
     biddingPolicy.mode[0].toUpperCase() + biddingPolicy.mode.slice(1)
-  } bid · ${kPolicy === "aggressive" ? "Aggressive" : "Regular"} play`;
+  } bid · ${kPolicy === "aggressive" ? "Aggressive" : "Regular"} play · ${botThinkTimeSeconds}s`;
 
   const normalizedJoinCode = useMemo(() => joinCode.trim().toUpperCase(), [joinCode]);
   const existingJoinToken = useMemo(() => {
@@ -160,6 +172,7 @@ export function MultiplayerLobbyPage({ onReady, onSelfPlay }: Props) {
         playerName: createPlayerName.trim(),
         biddingPolicy,
         kPolicy,
+        botThinkTimeSeconds,
       });
       const data = res.data;
       persistToken(data.roomCode, data.playerToken);
@@ -174,6 +187,7 @@ export function MultiplayerLobbyPage({ onReady, onSelfPlay }: Props) {
         playersJoined: data.playersJoined,
         biddingPolicy,
         kPolicy,
+        botThinkTimeSeconds,
       });
     } catch (e: unknown) {
       const err = e as { response?: { data?: { detail?: string } }; message?: string };
@@ -401,6 +415,9 @@ export function MultiplayerLobbyPage({ onReady, onSelfPlay }: Props) {
                     {waiting.biddingPolicy.mode} ·{" "}
                     {waiting.biddingPolicy.positionAware ? "position" : "pooled"} ·{" "}
                     {waiting.kPolicy || "regular"} play
+                    {waiting.botThinkTimeSeconds
+                      ? ` · ${waiting.botThinkTimeSeconds}s`
+                      : ""}
                   </span>
                 </div>
               ) : null}
@@ -580,6 +597,50 @@ export function MultiplayerLobbyPage({ onReady, onSelfPlay }: Props) {
                 </div>
                 <p className="preset-note play-note">
                   Aggressive explores more moves and may take longer.
+                </p>
+
+                <div className="settings-divider" />
+                <div className="play-policy-heading">
+                  <span>
+                    <strong>Thinking time</strong>
+                    <small>Maximum time for each bot card play</small>
+                  </span>
+                </div>
+                <div
+                  className="think-time-presets"
+                  role="group"
+                  aria-label="Bot thinking time"
+                >
+                  {[10, 30, 60].map((seconds) => (
+                    <button
+                      type="button"
+                      key={seconds}
+                      className={botThinkTimeSeconds === seconds ? "active" : ""}
+                      onClick={() => setBotThinkTimeSeconds(seconds)}
+                    >
+                      {seconds}s
+                    </button>
+                  ))}
+                  <label>
+                    <input
+                      aria-label="Custom bot thinking seconds"
+                      type="number"
+                      min="1"
+                      max="120"
+                      inputMode="numeric"
+                      value={botThinkTimeSeconds}
+                      onChange={(event) => {
+                        const value = Number(event.target.value);
+                        if (Number.isFinite(value)) {
+                          setBotThinkTimeSeconds(Math.max(1, Math.min(120, value)));
+                        }
+                      }}
+                    />
+                    <span>s</span>
+                  </label>
+                </div>
+                <p className="preset-note play-note">
+                  Plays the best result from every rollout completed in time.
                 </p>
               </div>
             </details>

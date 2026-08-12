@@ -27,6 +27,7 @@ from app.legacy import minimax as legacy_minimax
 
 _ray_inited = False
 _ray_rollout_remote = None
+_ray_rollout_batch_remote = None
 
 _rollout_metrics_lock = threading.Lock()
 _rollout_metrics_count = 0
@@ -86,9 +87,13 @@ def _ensure_ray():
     return ray
 
 
-def _get_ray_rollout_remote():
-    global _ray_rollout_remote
+def _get_ray_rollout_remote(*, deadline_aware: bool = False):
+    global _ray_rollout_remote, _ray_rollout_batch_remote
     ray = _ensure_ray()
+    if deadline_aware:
+        if _ray_rollout_batch_remote is None:
+            _ray_rollout_batch_remote = ray.remote(rollout_worker_batch)
+        return ray, _ray_rollout_batch_remote
     if _ray_rollout_remote is None:
         _ray_rollout_remote = ray.remote(rollout_worker)
     return ray, _ray_rollout_remote
@@ -247,7 +252,9 @@ def _deal_unknown_with_suit_constraints(
     return dealt
 
 
-def rollout_worker(snapshot: dict[str, Any], n: int, seed: int) -> dict[Any, int]:
+def _rollout_worker_result(
+    snapshot: dict[str, Any], n: int, seed: int
+) -> tuple[dict[Any, int], int]:
     """
     Runs n rollouts and returns a Counter-like dict mapping:
       - bool -> count
@@ -303,8 +310,13 @@ def rollout_worker(snapshot: dict[str, Any], n: int, seed: int) -> dict[Any, int
     known_trump_suit = snapshot.get("knownTrumpSuit") if trumpReveal else None
 
     counts: Counter = Counter()
+    completed_rollouts = 0
+    deadline_raw = snapshot.get("deadlineEpochMs")
+    deadline_epoch_ms = int(deadline_raw) if deadline_raw is not None else None
 
     for _ in range(n):
+        if deadline_epoch_ms is not None and time.time() * 1000 >= deadline_epoch_ms:
+            break
         # Build unknown pool
         base_pool_ids = [cid for cid in deck_ids if cid not in base_known]
         pool_ids = base_pool_ids[:]
@@ -746,7 +758,7 @@ def rollout_worker(snapshot: dict[str, Any], n: int, seed: int) -> dict[Any, int
             legacy_minimax.result = traced_result
 
         try:
-            legacy_minimax.minimax_extended(
+            minimax_args = (
                 s_cards[:],
                 True,
                 True,
@@ -767,6 +779,14 @@ def rollout_worker(snapshot: dict[str, Any], n: int, seed: int) -> dict[Any, int
                 0,
                 k,
             )
+            if deadline_epoch_ms is None:
+                legacy_minimax.minimax_extended(*minimax_args)
+            else:
+                legacy_minimax.minimax_extended(
+                    *minimax_args, deadline_epoch_ms=deadline_epoch_ms
+                )
+        except legacy_minimax.MinimaxDeadlineExceeded:
+            break
         except Exception as e:
             if dump_enabled:
                 dump = {
@@ -814,10 +834,25 @@ def rollout_worker(snapshot: dict[str, Any], n: int, seed: int) -> dict[Any, int
         finally:
             legacy_minimax.result = orig_result
 
+        if deadline_epoch_ms is not None and time.time() * 1000 > deadline_epoch_ms:
+            break
+
+        completed_rollouts += 1
         for a, _v in reward_distribution:
             counts[a] += 1
 
-    return dict(counts)
+    return dict(counts), completed_rollouts
+
+
+def rollout_worker(snapshot: dict[str, Any], n: int, seed: int) -> dict[Any, int]:
+    """Compatibility wrapper for unrestricted rollouts and debug tooling."""
+    return _rollout_worker_result(snapshot, n, seed)[0]
+
+
+def rollout_worker_batch(snapshot: dict[str, Any], n: int, seed: int) -> dict[str, Any]:
+    """Deadline-aware worker result with exact completion accounting."""
+    counts, completed = _rollout_worker_result(snapshot, n, seed)
+    return {"counts": counts, "completedRollouts": completed}
 
 
 # -----------------------------
@@ -911,6 +946,8 @@ async def choose_action_with_rollouts_parallel(
     *,
     rollout_seed_base: int | None = None,
     strict: bool = False,
+    timeout_seconds: float | None = None,
+    deadline_epoch_ms: int | None = None,
 ) -> tuple[str, dict]:
     """
     Returns:
@@ -926,11 +963,29 @@ async def choose_action_with_rollouts_parallel(
 
     total_rollouts = max(1, int(settings.rollouts))
     worker_count = max(1, min(int(settings.workers), total_rollouts))
-    timeout_seconds = max(0.0, float(settings.bot_think_timeout_seconds))
-    timeout_enabled = timeout_seconds > 0.0
+    resolved_timeout_seconds = max(
+        0.0,
+        float(
+            settings.bot_think_timeout_seconds
+            if timeout_seconds is None
+            else timeout_seconds
+        ),
+    )
+    timeout_enabled = resolved_timeout_seconds > 0.0
 
     snapshot = _build_snapshot(state, bot_seat)
     snapshot["strictRust"] = bool(strict)
+    if timeout_enabled:
+        if deadline_epoch_ms is None:
+            deadline_epoch_ms = int(
+                (time.time() + resolved_timeout_seconds) * 1000
+            )
+        snapshot["deadlineEpochMs"] = deadline_epoch_ms
+    remaining_timeout_seconds = (
+        max(0.0, (deadline_epoch_ms - time.time() * 1000) / 1000.0)
+        if deadline_epoch_ms is not None
+        else resolved_timeout_seconds
+    )
 
     def seed_for_batch(batch_index: int) -> int:
         if rollout_seed_base is None:
@@ -949,7 +1004,7 @@ async def choose_action_with_rollouts_parallel(
 
     try:
         if use_ray:
-            ray, remote_fn = _get_ray_rollout_remote()
+            ray, remote_fn = _get_ray_rollout_remote(deadline_aware=timeout_enabled)
             if not timeout_enabled:
                 refs = []
                 for batch_index, n in enumerate(batch_sizes):
@@ -959,7 +1014,7 @@ async def choose_action_with_rollouts_parallel(
                 completed_rollouts = sum(batch_sizes)
             else:
                 results = []
-                deadline = time.monotonic() + timeout_seconds
+                deadline = time.monotonic() + remaining_timeout_seconds
 
                 next_batch_idx = 0
                 in_flight: dict[Any, int] = {}
@@ -997,13 +1052,16 @@ async def choose_action_with_rollouts_parallel(
                     for ref in ready_refs:
                         n = in_flight.pop(ref, 0)
                         res = await asyncio.to_thread(ray.get, ref)
-                        results.append(res)
-                        completed_rollouts += n
+                        results.append(res.get("counts", {}))
+                        completed_rollouts += int(res.get("completedRollouts", 0))
                         _submit_one()
 
-                for ref in list(in_flight.keys()):
+                remaining_refs = list(in_flight.keys())
+                for ref in remaining_refs:
                     try:
-                        await asyncio.to_thread(ray.cancel, ref, False)
+                        res = await asyncio.to_thread(ray.get, ref)
+                        results.append(res.get("counts", {}))
+                        completed_rollouts += int(res.get("completedRollouts", 0))
                     except Exception:
                         pass
         else:
@@ -1018,7 +1076,7 @@ async def choose_action_with_rollouts_parallel(
                 completed_rollouts = sum(batch_sizes)
             else:
                 results = []
-                deadline = time.monotonic() + timeout_seconds
+                deadline = time.monotonic() + remaining_timeout_seconds
 
                 next_batch_idx = 0
                 in_flight: dict[asyncio.Future, tuple[Any, int]] = {}
@@ -1031,7 +1089,7 @@ async def choose_action_with_rollouts_parallel(
                     n = batch_sizes[batch_index]
                     next_batch_idx += 1
                     seed = seed_for_batch(batch_index)
-                    cfut = pool.submit(rollout_worker, snapshot, n, seed)
+                    cfut = pool.submit(rollout_worker_batch, snapshot, n, seed)
                     afut = asyncio.wrap_future(cfut, loop=loop)
                     in_flight[afut] = (cfut, n)
                     return True
@@ -1056,13 +1114,26 @@ async def choose_action_with_rollouts_parallel(
                     for afut in done:
                         _cfut, n = in_flight.pop(afut)
                         res = afut.result()
-                        results.append(res)
-                        completed_rollouts += n
+                        if "counts" in res:
+                            results.append(res.get("counts", {}))
+                            completed_rollouts += int(res.get("completedRollouts", 0))
+                        else:
+                            # Compatibility for custom executors used by callers/tests.
+                            results.append(res)
+                            completed_rollouts += n
                         _submit_one()
 
-                for _afut, (cfut, _n) in list(in_flight.items()):
+                # Rust workers observe the same absolute deadline recursively.
+                # Wait for them to acknowledge it so no abandoned computation
+                # leaks into the next turn, and collect only completed rollouts.
+                for afut, (_cfut, n) in list(in_flight.items()):
                     try:
-                        cfut.cancel()
+                        res = await afut
+                        if "counts" in res:
+                            results.append(res.get("counts", {}))
+                            completed_rollouts += int(res.get("completedRollouts", 0))
+                        # Results without completion metadata cannot prove they
+                        # finished before the deadline, so they are excluded.
                     except Exception:
                         pass
     except Exception as e:
@@ -1087,7 +1158,7 @@ async def choose_action_with_rollouts_parallel(
     if timeout_enabled and completed_rollouts < total_rollouts:
         timeout_msg = (
             f"Bot think timeout hit: used {completed_rollouts}/{total_rollouts} rollouts "
-            f"in {timeout_seconds:.2f}s."
+            f"in {resolved_timeout_seconds:.2f}s."
         )
         print(timeout_msg)
         try:
@@ -1107,7 +1178,10 @@ async def choose_action_with_rollouts_parallel(
             return ("REVEAL", {"seatIndex": bot_seat, "reveal": False})
         return ("PLAY", {"seatIndex": bot_seat, "cardId": legal.cardIds[0]})
 
-    best_action, _ = merged.most_common(1)[0]
+    # Stable ordering removes completion-order/random tie behavior.
+    best_action = sorted(
+        merged.items(), key=lambda item: (-item[1], str(item[0]))
+    )[0][0]
 
     # bool => reveal choice
     if isinstance(best_action, bool):

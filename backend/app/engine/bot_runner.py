@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from concurrent.futures import ProcessPoolExecutor
 from typing import Callable, Any
 
@@ -11,6 +12,7 @@ from app.engine.play_engine import (
     compute_play_legal_actions,
     resolve_if_catch_complete,
 )
+from app.settings import settings
 
 # Delay to display completed trick (4 cards visible)
 TRICK_DISPLAY_DELAY_SECONDS = 3
@@ -56,9 +58,35 @@ async def advance_bots_until_human(
 
         # Limit concurrent bot computations globally
         async with bot_sem:
-            action_type, payload = await choose_action_with_rollouts_parallel(
-                state, actor, pool
+            timeout_seconds = getattr(state, "bot_think_timeout_seconds", None)
+            if timeout_seconds is None:
+                timeout_seconds = max(0.0, float(settings.bot_think_timeout_seconds))
+            deadline_epoch_ms = (
+                int((time.time() + timeout_seconds) * 1000)
+                if timeout_seconds > 0
+                else None
             )
+            state.bot_thinking = (
+                {
+                    "seatIndex": actor,
+                    "startedAtEpochMs": int(time.time() * 1000),
+                    "deadlineEpochMs": deadline_epoch_ms,
+                }
+                if deadline_epoch_ms is not None
+                else None
+            )
+            if state.bot_thinking is not None:
+                await send_state_fn(websocket, state)
+            try:
+                action_type, payload = await choose_action_with_rollouts_parallel(
+                    state,
+                    actor,
+                    pool,
+                    timeout_seconds=timeout_seconds,
+                    deadline_epoch_ms=deadline_epoch_ms,
+                )
+            finally:
+                state.bot_thinking = None
 
         if action_type == "REVEAL":
             apply_reveal_choice(state, payload["seatIndex"], bool(payload["reveal"]))

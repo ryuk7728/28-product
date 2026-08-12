@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from collections import deque
 import secrets
 import string
 import threading
@@ -14,6 +15,13 @@ from app.settings import settings
 HUMAN_ROOM_SEATS: tuple[int, int] = (1, 3)
 ROOM_CODE_CHARS = string.ascii_uppercase + string.digits
 ROOM_CODE_LENGTH = 6
+DEFAULT_BOT_THINK_SECONDS = 30.0
+MIN_BOT_THINK_SECONDS = 1.0
+MAX_BOT_THINK_SECONDS = 120.0
+MAX_CHAT_MESSAGE_LENGTH = 280
+MAX_CHAT_HISTORY = 100
+CHAT_RATE_WINDOW_SECONDS = 10.0
+CHAT_RATE_MAX_MESSAGES = 5
 
 
 class RoomError(Exception):
@@ -39,10 +47,15 @@ class Room:
     starting_bidder_index: int
     bot_bidding_policy: BidPolicyConfig = field(default_factory=BidPolicyConfig.aggressive)
     bot_k_policy: KPolicyConfig = field(default_factory=KPolicyConfig)
+    bot_think_timeout_seconds: float = DEFAULT_BOT_THINK_SECONDS
     game_id: str | None = None
     seat_tokens: dict[int, str] = field(default_factory=dict)
     seat_names: dict[int, str] = field(default_factory=dict)
     rematch_ready_seats: set[int] = field(default_factory=set)
+    chat_messages: deque[dict[str, object]] = field(
+        default_factory=lambda: deque(maxlen=MAX_CHAT_HISTORY)
+    )
+    chat_sent_at: dict[int, deque[float]] = field(default_factory=dict)
 
     @property
     def players_joined(self) -> int:
@@ -127,6 +140,7 @@ class RoomManager:
             starting_bidder_index=room.starting_bidder_index,
             bot_bidding_policy=room.bot_bidding_policy,
             bot_k_policy=room.bot_k_policy,
+            bot_think_timeout_seconds=room.bot_think_timeout_seconds,
         )
         state.player_names = [
             "T-1000",
@@ -144,6 +158,7 @@ class RoomManager:
         starting_bidder_index: int | None = None,
         bot_bidding_policy: BidPolicyConfig | None = None,
         bot_k_policy: KPolicyConfig | None = None,
+        bot_think_timeout_seconds: float = DEFAULT_BOT_THINK_SECONDS,
     ) -> RoomAssignment:
         with self._lock:
             self._cleanup_expired_locked()
@@ -158,6 +173,9 @@ class RoomManager:
                 ),
                 bot_bidding_policy=bot_bidding_policy or BidPolicyConfig.aggressive(),
                 bot_k_policy=bot_k_policy or KPolicyConfig(),
+                bot_think_timeout_seconds=self._validate_bot_think_seconds(
+                    bot_think_timeout_seconds
+                ),
             )
             seat_index = HUMAN_ROOM_SEATS[0]
             player_token = secrets.token_urlsafe(24)
@@ -239,7 +257,61 @@ class RoomManager:
                 "playersJoined": room.players_joined,
                 "biddingPolicy": room.bot_bidding_policy.to_public_dict(),
                 "kPolicy": room.bot_k_policy.to_public_dict(),
+                "botThinkTimeSeconds": room.bot_think_timeout_seconds,
             }
+
+    def _validate_bot_think_seconds(self, value: float) -> float:
+        seconds = float(value)
+        if not MIN_BOT_THINK_SECONDS <= seconds <= MAX_BOT_THINK_SECONDS:
+            raise RoomError(
+                f"botThinkTimeSeconds must be between {MIN_BOT_THINK_SECONDS:g} "
+                f"and {MAX_BOT_THINK_SECONDS:g}."
+            )
+        return seconds
+
+    def get_chat_history(self, *, room_code: str) -> list[dict[str, object]]:
+        with self._lock:
+            self._cleanup_expired_locked()
+            room = self._lookup_room_locked(room_code)
+            return [dict(message) for message in room.chat_messages]
+
+    def add_chat_message(
+        self, *, room_code: str, player_token: str, text: str
+    ) -> dict[str, object]:
+        with self._lock:
+            self._cleanup_expired_locked()
+            room = self._lookup_room_locked(room_code)
+            seat_index = self._find_seat_for_token_locked(
+                room, player_token.strip()
+            )
+            if seat_index is None:
+                raise RoomTokenError("Invalid room token.")
+
+            cleaned = str(text).strip()
+            if not cleaned:
+                raise RoomError("Chat message cannot be empty.")
+            if len(cleaned) > MAX_CHAT_MESSAGE_LENGTH:
+                raise RoomError(
+                    f"Chat messages must be at most {MAX_CHAT_MESSAGE_LENGTH} characters."
+                )
+
+            now = time.time()
+            recent = room.chat_sent_at.setdefault(seat_index, deque())
+            while recent and now - recent[0] >= CHAT_RATE_WINDOW_SECONDS:
+                recent.popleft()
+            if len(recent) >= CHAT_RATE_MAX_MESSAGES:
+                raise RoomError("You are sending messages too quickly. Please wait.")
+            recent.append(now)
+
+            message = {
+                "id": secrets.token_urlsafe(9),
+                "seatIndex": seat_index,
+                "senderName": room.seat_names.get(seat_index, f"P{seat_index + 1}"),
+                "text": cleaned,
+                "sentAtEpochMs": int(now * 1000),
+            }
+            room.chat_messages.append(message)
+            return dict(message)
 
     def validate_player(self, *, room_code: str, player_token: str) -> tuple[Room, int]:
         with self._lock:

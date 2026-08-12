@@ -130,6 +130,11 @@ class GameState:
     bot_bidding_policy: BidPolicyConfig = field(default_factory=BidPolicyConfig.aggressive)
     # Immutable per-game rollout search breadth selected by the host.
     bot_k_policy: KPolicyConfig | None = None
+    # Per-move wall-clock budget for bot card-play search. None preserves
+    # process-level experiment configuration; normal games set this explicitly.
+    bot_think_timeout_seconds: float | None = None
+    # Transient server-authoritative countdown information while a bot searches.
+    bot_thinking: dict[str, object] | None = None
 
     # Self-play data-generation metadata. These fields are unused in normal
     # human/multiplayer games.
@@ -201,6 +206,8 @@ class GameState:
             "fixedDeckMode": self.fixed_deck_mode,
             "botBiddingPolicy": self.bot_bidding_policy.to_public_dict(),
             "botKPolicy": (self.bot_k_policy or KPolicyConfig()).to_public_dict(),
+            "botThinkTimeSeconds": self.bot_think_timeout_seconds,
+            "botThinking": self.bot_thinking,
             "bidsR1": self.bids_r1_by_seat,
             "bidsR2": self.bids_r2_by_seat,
             "round1BidderSeat": self.round1_bidder_seat,

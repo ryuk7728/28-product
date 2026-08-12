@@ -13,12 +13,14 @@ class CreateGameRequest(BaseModel):
     first4Hands: list[list[str]]
     biddingPolicy: BidPolicyRequest | None = None
     kPolicy: KPolicyMode | None = None
+    botThinkTimeSeconds: float = Field(default=30.0, ge=1.0, le=120.0)
 
 
 class CreateGameAutoRequest(BaseModel):
     startingBidderIndex: int = Field(ge=0, le=3)
     biddingPolicy: BidPolicyRequest | None = None
     kPolicy: KPolicyMode | None = None
+    botThinkTimeSeconds: float = Field(default=30.0, ge=1.0, le=120.0)
 
 
 class CreateGameResponse(BaseModel):
@@ -38,6 +40,7 @@ def create_game_auto(req: CreateGameAutoRequest) -> CreateGameResponse:
             starting_bidder_index=req.startingBidderIndex,
             bot_bidding_policy=resolve_bid_policy(req.biddingPolicy),
             bot_k_policy=resolve_k_policy(req.kPolicy),
+            bot_think_timeout_seconds=req.botThinkTimeSeconds,
         )
         return CreateGameResponse(gameId=state.game_id)
     except ValueError as e:
@@ -52,6 +55,7 @@ def create_game(req: CreateGameRequest) -> CreateGameResponse:
             first4_hands=req.first4Hands,
             bot_bidding_policy=resolve_bid_policy(req.biddingPolicy),
             bot_k_policy=resolve_k_policy(req.kPolicy),
+            bot_think_timeout_seconds=req.botThinkTimeSeconds,
         )
         return CreateGameResponse(gameId=state.game_id)
     except ValueError as e:

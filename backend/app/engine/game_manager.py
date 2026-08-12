@@ -26,6 +26,7 @@ class GameManager:
         starting_bidder_index: int,
         bot_bidding_policy: BidPolicyConfig | None = None,
         bot_k_policy: KPolicyConfig | None = None,
+        bot_think_timeout_seconds: float | None = 30.0,
     ) -> GameState:
         """
         Create a new game with automatic card distribution.
@@ -72,6 +73,7 @@ class GameManager:
             fixed_deck_mode=fixed_mode,
             bot_bidding_policy=bot_bidding_policy or BidPolicyConfig.aggressive(),
             bot_k_policy=bot_k_policy or KPolicyConfig(),
+            bot_think_timeout_seconds=bot_think_timeout_seconds,
             event_log=[
                 "Game created (auto-deal)."
                 if not fixed_mode
@@ -114,6 +116,7 @@ class GameManager:
         first4_hands: list[list[str]],
         bot_bidding_policy: BidPolicyConfig | None = None,
         bot_k_policy: KPolicyConfig | None = None,
+        bot_think_timeout_seconds: float | None = 30.0,
     ) -> GameState:
         if starting_bidder_index < 0 or starting_bidder_index > 3:
             raise ValueError("startingBidderIndex must be in 0..3")
@@ -140,6 +143,7 @@ class GameManager:
             fixed_deck_mode=False,
             bot_bidding_policy=bot_bidding_policy or BidPolicyConfig.aggressive(),
             bot_k_policy=bot_k_policy or KPolicyConfig(),
+            bot_think_timeout_seconds=bot_think_timeout_seconds,
             event_log=[
                 "Game created (manual first-4).",
                 f"Starting bidder: P{starting_bidder_index + 1}",

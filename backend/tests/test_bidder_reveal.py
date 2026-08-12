@@ -20,6 +20,9 @@ def test_rollout_worker_bidder_reveal_adds_then_plays_trump_indicator(
           2) actions() returns [playerTrump] (non-None) for bidder
           3) after playing, it's removed from bidder's hand.
     """
+    # This test instruments Python recursion internals; make that dependency
+    # explicit so a developer's strict-Rust environment cannot bypass the spies.
+    monkeypatch.setattr(rb.legacy_minimax, "_MINIMAX_BACKEND_REQUESTED", "python")
 
     bidder_seat = 2  # P3
     indicator_cid = "Clubs_Ace"

@@ -9,7 +9,7 @@
  * - Thinking indicator for bots
  */
 
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { PLAYER_NAMES, SEAT_TYPES } from "../../config/constants";
 import "../../styles/player.scss";
 
@@ -22,6 +22,7 @@ export interface PlayerAvatarProps {
   isBidder?: boolean;
   currentBid?: number | null;
   isThinking?: boolean;
+  thinkingDeadlineEpochMs?: number | null;
   speechBubbleText?: string | null;
   speechBubbleDirection?: "left" | "right";
 }
@@ -35,12 +36,24 @@ export const PlayerAvatar: React.FC<PlayerAvatarProps> = ({
   isBidder = false,
   currentBid,
   isThinking = false,
+  thinkingDeadlineEpochMs = null,
   speechBubbleText = null,
   speechBubbleDirection,
 }) => {
   const name = displayName ?? PLAYER_NAMES[seatIndex];
   const resolvedIsBot = isBot ?? (SEAT_TYPES[seatIndex] === "bot");
   const initial = name.charAt(0).toUpperCase();
+  const [clockEpochMs, setClockEpochMs] = useState(Date.now);
+  const remainingSeconds =
+    isThinking && thinkingDeadlineEpochMs
+      ? Math.max(0, Math.ceil((thinkingDeadlineEpochMs - clockEpochMs) / 1000))
+      : null;
+
+  useEffect(() => {
+    if (!isThinking || !thinkingDeadlineEpochMs) return;
+    const interval = window.setInterval(() => setClockEpochMs(Date.now()), 250);
+    return () => window.clearInterval(interval);
+  }, [isThinking, thinkingDeadlineEpochMs]);
 
   return (
     <div className={`player-info ${isBidGlow ? "bid-turn-glow" : ""}`}>
@@ -79,7 +92,9 @@ export const PlayerAvatar: React.FC<PlayerAvatarProps> = ({
       {/* Thinking indicator for bots */}
       {isThinking && resolvedIsBot && (
         <div className="thinking-indicator">
-          <span>Thinking</span>
+          <span>
+            Thinking{remainingSeconds !== null ? ` · ${remainingSeconds}s` : ""}
+          </span>
           <div className="thinking-dots">
             <span className="dot" />
             <span className="dot" />

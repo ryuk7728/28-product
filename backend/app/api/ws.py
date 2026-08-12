@@ -42,6 +42,7 @@ TRICK_DISPLAY_DELAY_SECONDS = 3
 EMPTY_TABLE_PAUSE_SECONDS = 1
 
 _ROOM_CONNECTIONS: dict[str, list[tuple[WebSocket, int | None, bool]]] = defaultdict(list)
+_ROOM_CHAT_CONNECTIONS: dict[str, list[WebSocket]] = defaultdict(list)
 _ROOM_REGISTRY_LOCK = asyncio.Lock()
 async def _register_room_connection(
     room_code: str, websocket: WebSocket, viewer_seat: int | None, can_act: bool
@@ -69,6 +70,38 @@ async def _room_connections_snapshot(
 ) -> list[tuple[WebSocket, int | None, bool]]:
     async with _ROOM_REGISTRY_LOCK:
         return list(_ROOM_CONNECTIONS.get(room_code.upper(), []))
+
+
+async def _register_room_chat_connection(
+    room_code: str, websocket: WebSocket
+) -> None:
+    async with _ROOM_REGISTRY_LOCK:
+        _ROOM_CHAT_CONNECTIONS[room_code.upper()].append(websocket)
+
+
+async def _unregister_room_chat_connection(
+    room_code: str, websocket: WebSocket
+) -> None:
+    async with _ROOM_REGISTRY_LOCK:
+        key = room_code.upper()
+        _ROOM_CHAT_CONNECTIONS[key] = [
+            ws for ws in _ROOM_CHAT_CONNECTIONS.get(key, []) if ws is not websocket
+        ]
+        if not _ROOM_CHAT_CONNECTIONS[key]:
+            _ROOM_CHAT_CONNECTIONS.pop(key, None)
+
+
+async def _broadcast_chat_message(room_code: str, payload: dict) -> None:
+    async with _ROOM_REGISTRY_LOCK:
+        sockets = list(_ROOM_CHAT_CONNECTIONS.get(room_code.upper(), []))
+    stale: list[WebSocket] = []
+    for ws in sockets:
+        try:
+            await ws.send_json(payload)
+        except Exception:
+            stale.append(ws)
+    for ws in stale:
+        await _unregister_room_chat_connection(room_code, ws)
 
 
 async def _send_state(websocket: WebSocket, state) -> None:
@@ -988,3 +1021,55 @@ async def ws_room(websocket: WebSocket, room_code: str) -> None:
         )
     finally:
         await _unregister_room_connection(room_code, websocket)
+
+
+@router.websocket("/ws/rooms/{room_code}/chat")
+async def ws_room_chat(websocket: WebSocket, room_code: str) -> None:
+    """Independent room chat channel, so bot search never delays messages."""
+    await websocket.accept()
+    player_token = websocket.query_params.get("token", "").strip()
+    if not player_token:
+        await websocket.send_json({"type": "ERROR", "message": "Missing room token."})
+        await websocket.close()
+        return
+
+    try:
+        room_manager.validate_player(
+            room_code=room_code, player_token=player_token
+        )
+        history = room_manager.get_chat_history(room_code=room_code)
+    except RoomNotFoundError:
+        await websocket.send_json({"type": "ERROR", "message": "Room not found."})
+        await websocket.close()
+        return
+    except RoomTokenError:
+        await websocket.send_json({"type": "ERROR", "message": "Invalid room token."})
+        await websocket.close()
+        return
+
+    await _register_room_chat_connection(room_code, websocket)
+    try:
+        await websocket.send_json({"type": "CHAT_HISTORY", "messages": history})
+        while True:
+            msg = await websocket.receive_json()
+            if msg.get("type") != "SEND_CHAT":
+                await websocket.send_json(
+                    {"type": "ERROR", "message": "Unknown chat message type."}
+                )
+                continue
+            try:
+                chat_message = room_manager.add_chat_message(
+                    room_code=room_code,
+                    player_token=player_token,
+                    text=msg.get("text", ""),
+                )
+            except (RoomError, RoomNotFoundError, RoomTokenError) as exc:
+                await websocket.send_json({"type": "ERROR", "message": str(exc)})
+                continue
+            await _broadcast_chat_message(
+                room_code, {"type": "CHAT_MESSAGE", "message": chat_message}
+            )
+    except WebSocketDisconnect:
+        return
+    finally:
+        await _unregister_room_chat_connection(room_code, websocket)
