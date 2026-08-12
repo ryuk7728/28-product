@@ -128,6 +128,7 @@ export const GamePage: React.FC<GamePageProps> = ({
 }) => {
   const [selectedCard, setSelectedCard] = useState<string | null>(null);
   const [abortReason, setAbortReason] = useState<string | null>(null);
+  const [connectionError, setConnectionError] = useState<string | null>(null);
   const [botBidBubble, setBotBidBubble] = useState<{
     seatIndex: number;
     text: string;
@@ -161,7 +162,10 @@ export const GamePage: React.FC<GamePageProps> = ({
     playerToken,
     spectateMode,
     selfPlayMode,
-    onError: () => {},
+    onError: (message) => setConnectionError(message),
+    onConnectionChange: (isConnected) => {
+      if (isConnected) setConnectionError(null);
+    },
     onGameAborted: (reason) => {
       setAbortReason(reason);
     },
@@ -950,8 +954,13 @@ export const GamePage: React.FC<GamePageProps> = ({
           gap: 16,
         }}
       >
-        <div style={{ fontSize: 24 }}>Connecting to game...</div>
-        <div style={{ fontSize: 14, opacity: 0.7 }}>Game ID: {gameId}</div>
+        <div style={{ fontSize: 24 }}>{connectionError ? "We couldn't reach this table" : "Connecting to game…"}</div>
+        <div style={{ fontSize: 14, opacity: 0.7, textAlign: "center", maxWidth: 320 }}>
+          {connectionError ?? "Restoring your seat securely."}
+        </div>
+        {connectionError ? (
+          <button className="recovery-home-button" onClick={onGameEnd}>Back to home</button>
+        ) : null}
       </div>
     );
   }

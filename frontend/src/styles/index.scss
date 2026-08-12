@@ -46,6 +46,18 @@ body {
   font: 600 11px "DM Sans", system-ui, sans-serif;
 }
 
+.recovery-home-button {
+  min-height: 46px;
+  margin-top: 8px;
+  padding: 0 22px;
+  border: 0;
+  border-radius: 13px;
+  background: #e4c268;
+  color: #102619;
+  font: 700 14px "DM Sans", system-ui, sans-serif;
+  cursor: pointer;
+}
+
 .connection-pill {
   top: max(12px, env(safe-area-inset-top));
   left: 50%;

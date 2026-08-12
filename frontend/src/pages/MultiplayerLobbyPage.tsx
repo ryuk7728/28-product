@@ -125,11 +125,23 @@ export function MultiplayerLobbyPage({ onReady }: Props) {
       } catch {
         localStorage.removeItem(tokenKey(code));
       }
-      const response = await http.post<RoomJoinResponse>("/rooms/join", {
-        roomCode: code,
-        playerName: name.trim(),
-        playerToken: saved?.token ?? null,
-      });
+      let response;
+      try {
+        response = await http.post<RoomJoinResponse>("/rooms/join", {
+          roomCode: code,
+          playerName: name.trim(),
+          playerToken: saved?.token ?? null,
+        });
+      } catch (caught) {
+        const status = (caught as { response?: { status?: number } }).response?.status;
+        if (!saved?.token || status !== 401) throw caught;
+        localStorage.removeItem(tokenKey(code));
+        response = await http.post<RoomJoinResponse>("/rooms/join", {
+          roomCode: code,
+          playerName: name.trim(),
+          playerToken: null,
+        });
+      }
       remember(response.data);
     } catch (caught) {
       setError(messageForError(caught, "We couldn't join that table."));
