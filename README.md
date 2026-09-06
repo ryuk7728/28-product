@@ -36,9 +36,15 @@ npm run build
 ## Production architecture
 
 - Vercel serves `frontend/`.
-- A dedicated `game28-product-api` Cloud Run service hosts the API and room WebSockets.
-- The container compiles and requires the Rust extension.
-- Cloud Run must remain at one instance while room/game state is in memory.
-- `VITE_API_BASE_URL` and `VITE_WS_BASE_URL` point at the product Cloud Run URL.
+- The dedicated Linux game host runs the API and room WebSockets as the
+  `28-product.service` user service.
+- Tailscale Funnel exposes that loopback-only API over public HTTPS/WSS.
+- The Python 3.10 virtual environment contains a release build of the Rust
+  extension, and strict-Rust startup refuses to serve if that extension fails.
+- The current four-core host uses four rollout workers and serializes bot turns
+  so simultaneous searches cannot overload it.
+- `VITE_API_BASE_URL` and `VITE_WS_BASE_URL` point at the product Funnel URL.
+
+The checked-in service and environment templates live in `deploy/linux/`.
 
 The legacy 28 Superhuman deployments are separate and must not be modified.

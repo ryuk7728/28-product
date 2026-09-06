@@ -1,0 +1,18 @@
+[Unit]
+Description=Twenty-Eight product game API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/28-product/backend
+EnvironmentFile=%h/.config/28-product/backend.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONUNBUFFERED=1
+ExecStart=%h/28-product/.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8100
+Restart=always
+RestartSec=5
+TimeoutStopSec=40
+
+[Install]
+WantedBy=default.target
