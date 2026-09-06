@@ -114,6 +114,7 @@ export interface GamePageProps {
   spectateMode?: boolean;
   selfPlayMode?: boolean;
   onGameEnd?: () => void;
+  onExit?: () => void;
 }
 
 export const GamePage: React.FC<GamePageProps> = ({
@@ -125,10 +126,12 @@ export const GamePage: React.FC<GamePageProps> = ({
   spectateMode = false,
   selfPlayMode = false,
   onGameEnd,
+  onExit,
 }) => {
   const [selectedCard, setSelectedCard] = useState<string | null>(null);
   const [abortReason, setAbortReason] = useState<string | null>(null);
   const [connectionError, setConnectionError] = useState<string | null>(null);
+  const [showExitConfirmation, setShowExitConfirmation] = useState(false);
   const [botBidBubble, setBotBidBubble] = useState<{
     seatIndex: number;
     text: string;
@@ -474,6 +477,11 @@ export const GamePage: React.FC<GamePageProps> = ({
 
     onGameEnd?.();
   }, [onGameEnd, roomCode, playerToken, spectateMode, phase, requestNewGame]);
+
+  const handleExitGame = useCallback(() => {
+    setShowExitConfirmation(false);
+    (onExit ?? onGameEnd)?.();
+  }, [onExit, onGameEnd]);
 
   const legalCardIds = useMemo(() => {
     if (legalActions?.type === "PLAY_CARD") {
@@ -972,8 +980,12 @@ export const GamePage: React.FC<GamePageProps> = ({
 
   return (
     <div className="product-game-shell">
-      <div className={`connection-pill ${connected ? "online" : "offline"}`}>{connected ? "Live" : "Reconnecting…"}</div>
-      {roomCode ? <button className="game-room-code" onClick={() => navigator.clipboard.writeText(roomCode)}>Table {roomCode}</button> : null}
+      {!connected ? <div className="connection-pill offline">Reconnecting…</div> : null}
+      {onExit ? (
+        <button className="game-exit-button" onClick={() => setShowExitConfirmation(true)}>
+          <span aria-hidden="true">←</span> Exit game
+        </button>
+      ) : null}
       <GameArena
         players={players}
         centerContent={renderCenterContent()}
@@ -1013,6 +1025,26 @@ export const GamePage: React.FC<GamePageProps> = ({
           )
         }
       />
+      {showExitConfirmation ? (
+        <div className="exit-dialog-backdrop" role="presentation">
+          <section
+            className="exit-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="exit-dialog-title"
+          >
+            <div className="exit-dialog-kicker">LEAVE THE TABLE?</div>
+            <h2 id="exit-dialog-title">Exit this game?</h2>
+            <p>Your current game will end for you. Your player name will still be remembered.</p>
+            <div className="exit-dialog-actions">
+              <button className="exit-stay-button" onClick={() => setShowExitConfirmation(false)} autoFocus>
+                Keep playing
+              </button>
+              <button className="exit-confirm-button" onClick={handleExitGame}>Exit game</button>
+            </div>
+          </section>
+        </div>
+      ) : null}
     </div>
   );
 };

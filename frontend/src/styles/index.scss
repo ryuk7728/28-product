@@ -34,7 +34,7 @@ body {
 }
 
 .connection-pill,
-.game-room-code {
+.game-exit-button {
   position: fixed;
   z-index: 300;
   min-height: 34px;
@@ -59,7 +59,7 @@ body {
 }
 
 .connection-pill {
-  top: max(12px, env(safe-area-inset-top));
+  top: max(54px, calc(env(safe-area-inset-top) + 42px));
   left: 50%;
   transform: translateX(-50%);
   display: flex;
@@ -78,11 +78,75 @@ body {
   &.offline::before { background: #f0c06a; }
 }
 
-.game-room-code {
+.game-exit-button {
   top: max(12px, env(safe-area-inset-top));
-  right: max(12px, env(safe-area-inset-right));
-  padding: 0 13px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 14px;
   cursor: pointer;
+
+  &:hover { background: rgba(8, 39, 25, 0.94); color: #fff; }
+  &:focus-visible { outline: 2px solid #e4c268; outline-offset: 3px; }
+}
+
+.exit-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(1, 12, 8, .62);
+  backdrop-filter: blur(8px);
+}
+
+.exit-dialog {
+  width: min(410px, 100%);
+  padding: 32px;
+  border: 1px solid rgba(228, 194, 104, .32);
+  border-radius: 24px;
+  background: #f8faf8;
+  color: #102619;
+  box-shadow: 0 30px 90px rgba(0, 0, 0, .42);
+  text-align: center;
+
+  h2 { margin-top: 8px; font: 600 30px "Fraunces", Georgia, serif; }
+  p { margin-top: 10px; color: #68766e; font: 400 14px/1.55 "DM Sans", system-ui, sans-serif; }
+}
+
+.exit-dialog-kicker {
+  color: #9a7927;
+  font: 700 10px "DM Sans", system-ui, sans-serif;
+  letter-spacing: .18em;
+}
+
+.exit-dialog-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 24px;
+
+  button {
+    min-height: 48px;
+    border-radius: 13px;
+    font: 700 13px "DM Sans", system-ui, sans-serif;
+    cursor: pointer;
+  }
+}
+
+.exit-stay-button {
+  border: 1px solid #cdd7d1;
+  background: #fff;
+  color: #243b2d;
+}
+
+.exit-confirm-button {
+  border: 1px solid #8d3c35;
+  background: #9f473e;
+  color: #fff;
 }
 
 @media (max-width: 700px) {
@@ -142,14 +206,13 @@ body {
   .game-over-modal .result-score { display: flex; justify-content: center; gap: 14px; align-items: center; font: 600 42px "Fraunces", Georgia, serif; color: #123a28; }
   .game-over-modal .result-kicker { margin-bottom: 8px; color: #84968a; font-size: 10px; font-weight: 700; letter-spacing: .16em; }
 
-  .connection-pill { left: 50%; }
-  .game-room-code { font-size: 9px; padding-inline: 9px; }
+  .connection-pill, .game-exit-button { left: 50%; }
 }
 
 @media (max-width: 350px) {
   .player-area.south .hand-container { transform: scale(.72); }
   .player-area.west .hand-container, .player-area.east .hand-container { transform: scale(.62); }
-  .game-room-code { display: none; }
+  .game-exit-button { display: none; }
 }
 
 // Import component styles

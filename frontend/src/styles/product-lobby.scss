@@ -36,6 +36,7 @@
 .product-brand.compact { justify-content: center; margin-bottom: 28px; }
 .nav-join, .text-action { min-height: 44px; border: 0; background: transparent; color: #d7e3da; font: 600 14px inherit; cursor: pointer; }
 .nav-join { padding: 0 5px; border-bottom: 1px solid rgba(227,189,102,.55); }
+.solo-label { color: #91a79a; font-size: 11px; font-weight: 700; letter-spacing: .16em; text-transform: uppercase; }
 
 .hero-grid { min-height: calc(100svh - 150px); display: grid; grid-template-columns: 1.12fr .88fr; align-items: center; gap: clamp(50px, 8vw, 120px); padding-block: 54px 42px; }
 .eyebrow { color: var(--gold); font-size: 11px; font-weight: 700; letter-spacing: .22em; margin-bottom: 22px; }
@@ -47,6 +48,7 @@
 
 .setup-card, .waiting-card { border: 1px solid rgba(157,190,168,.19); background: linear-gradient(145deg, rgba(17,56,41,.82), rgba(7,29,21,.94)); box-shadow: 0 28px 80px rgba(0,0,0,.38), inset 0 1px rgba(255,255,255,.03); backdrop-filter: blur(20px); }
 .setup-card { width: 100%; padding: clamp(24px, 4vw, 42px); border-radius: 30px; }
+.solo-setup-card { max-width: 500px; justify-self: end; }
 .setup-heading { margin-bottom: 28px; }
 .setup-heading span { display: block; font: 500 31px "Fraunces", serif; }
 .setup-heading small { display: block; margin-top: 8px; color: var(--muted); font-size: 13px; }
@@ -98,12 +100,54 @@
 .partnership-note { color: #8ea196; font-size: 11px; line-height: 1.5; }
 .text-action { color: #81978a; }
 
-@media (max-width: 760px) {
+.phone-block-shell {
+  --gold: #e3bd66;
+  display: grid;
+  min-height: 100svh;
+  place-items: center;
+  padding: 24px;
+  background:
+    radial-gradient(circle at 50% 0%, rgba(34, 116, 79, .25), transparent 28rem),
+    #071912;
+  color: #f6f1e6;
+  font-family: "DM Sans", system-ui, sans-serif;
+}
+
+.phone-block-card {
+  width: min(440px, 100%);
+  padding: 34px 25px;
+  border: 1px solid rgba(157,190,168,.2);
+  border-radius: 28px;
+  background: linear-gradient(145deg, rgba(17,56,41,.88), rgba(7,29,21,.96));
+  box-shadow: 0 28px 80px rgba(0,0,0,.4);
+  text-align: center;
+
+  .product-brand { margin-bottom: 30px; }
+  .eyebrow { margin: 24px 0 10px; }
+  h1 { font: 500 36px/1.05 "Fraunces", Georgia, serif; letter-spacing: -.035em; }
+  p { margin-top: 15px; color: #a9b9ad; font-size: 14px; line-height: 1.65; }
+}
+
+.large-screen-mark {
+  position: relative;
+  width: 88px;
+  height: 58px;
+  margin: 0 auto;
+  border: 2px solid rgba(227,189,102,.72);
+  border-radius: 8px;
+  box-shadow: inset 0 0 25px rgba(227,189,102,.08);
+
+  &::before { content: ""; position: absolute; left: 50%; bottom: -10px; width: 2px; height: 9px; background: rgba(227,189,102,.72); }
+  &::after { content: ""; position: absolute; left: 50%; bottom: -12px; width: 30px; height: 2px; transform: translateX(-50%); border-radius: 2px; background: rgba(227,189,102,.72); }
+  i { position: absolute; inset: 7px; border-radius: 3px; background: radial-gradient(circle at center, rgba(64,160,110,.35), rgba(7,25,18,.7)); }
+}
+
+@media (max-width: 980px) {
   .product-shell { padding-inline: 18px; }
   .hero-grid { min-height: auto; grid-template-columns: 1fr; gap: 36px; padding-block: 56px 30px; }
   .hero-copy h1 { font-size: clamp(49px, 15vw, 72px); }
   .hero-copy p { margin-top: 22px; }
-  .setup-card { border-radius: 24px; }
+  .setup-card { max-width: 560px; border-radius: 24px; justify-self: stretch; }
   .product-footer { flex-direction: column; gap: 5px; }
 }
 

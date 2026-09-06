@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Query
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.engine.room_manager import (
@@ -18,7 +20,7 @@ router = APIRouter()
 class CreateRoomRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     playerName: str = Field(min_length=1, max_length=24)
-    humanCount: int = Field(ge=1, le=4)
+    humanCount: Literal[1] = 1
     startingBidderIndex: int | None = Field(default=None, ge=0, le=3)
 
 
