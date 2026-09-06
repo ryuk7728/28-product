@@ -80,16 +80,20 @@ body {
 
 .game-exit-button {
   top: max(12px, env(safe-area-inset-top));
-  left: 50%;
+  left: calc(50% - clamp(180px, 11vw, 230px));
   transform: translateX(-50%);
   display: flex;
   align-items: center;
   gap: 7px;
   padding: 0 14px;
+  border-color: rgba(255, 171, 161, .52);
+  background: rgba(139, 42, 36, .9);
+  color: #fff4f2;
+  box-shadow: 0 7px 20px rgba(72, 12, 10, .24);
   cursor: pointer;
 
-  &:hover { background: rgba(8, 39, 25, 0.94); color: #fff; }
-  &:focus-visible { outline: 2px solid #e4c268; outline-offset: 3px; }
+  &:hover { background: rgba(168, 49, 42, .96); color: #fff; }
+  &:focus-visible { outline: 2px solid #ffb0a7; outline-offset: 3px; }
 }
 
 .exit-dialog-backdrop {
@@ -206,7 +210,7 @@ body {
   .game-over-modal .result-score { display: flex; justify-content: center; gap: 14px; align-items: center; font: 600 42px "Fraunces", Georgia, serif; color: #123a28; }
   .game-over-modal .result-kicker { margin-bottom: 8px; color: #84968a; font-size: 10px; font-weight: 700; letter-spacing: .16em; }
 
-  .connection-pill, .game-exit-button { left: 50%; }
+  .connection-pill { left: 50%; }
 }
 
 @media (max-width: 350px) {
