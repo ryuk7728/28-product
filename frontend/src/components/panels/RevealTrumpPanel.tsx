@@ -9,7 +9,7 @@
 
 import React from "react";
 import { Card } from "../card/Card";
-import { PLAYER_NAMES, SUIT_SYMBOLS, CARD_WIDTH_SMALL, CARD_HEIGHT_SMALL } from "../../config/constants";
+import { SUIT_SYMBOLS, CARD_WIDTH_SMALL, CARD_HEIGHT_SMALL } from "../../config/constants";
 import "../../styles/panels.scss";
 
 export interface PlayedCardInfo {
@@ -20,6 +20,7 @@ export interface PlayedCardInfo {
 export interface RevealTrumpPanelProps {
   onReveal: () => void;
   onKeepHidden: () => void;
+  getPlayerName: (seatIndex: number) => string;
   message?: string;
   playedCards?: PlayedCardInfo[];
   currentSuit?: string;
@@ -28,6 +29,7 @@ export interface RevealTrumpPanelProps {
 export const RevealTrumpPanel: React.FC<RevealTrumpPanelProps> = ({
   onReveal,
   onKeepHidden,
+  getPlayerName,
   message = "You can't follow suit. Reveal trump?",
   playedCards = [],
   currentSuit,
@@ -46,7 +48,7 @@ export const RevealTrumpPanel: React.FC<RevealTrumpPanelProps> = ({
           <div className="played-cards-list">
             {playedCards.map((pc, idx) => (
               <div key={idx} className="played-card-item">
-                <span className="player-name">{PLAYER_NAMES[pc.seatIndex]}:</span>
+                <span className="player-name">{getPlayerName(pc.seatIndex)}:</span>
                 <Card
                   cardId={pc.cardId}
                   faceUp={true}

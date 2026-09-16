@@ -709,6 +709,7 @@ export const GamePage: React.FC<GamePageProps> = ({
           onReveal={() => handleRevealChoice(true)}
           onKeepHidden={() => handleRevealChoice(false)}
           playedCards={playedCards}
+          getPlayerName={getSeatDisplayName}
           currentSuit={gameState?.play?.currentSuit}
         />
       );
